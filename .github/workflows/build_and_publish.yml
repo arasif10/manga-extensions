@@ -30,7 +30,7 @@ jobs:
         run: |
           if [ -z "${{ secrets.SIGNING_KEY }}" ]; then
             echo "SIGNING_KEY secret is missing; building unsigned APKs"
-            return 0
+            exit 0
           fi
           echo "${{ secrets.SIGNING_KEY }}" | base64 -d > signingkey.jks
           test -s signingkey.jks || {
