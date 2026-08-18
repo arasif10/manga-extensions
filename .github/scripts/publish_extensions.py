@@ -96,15 +96,25 @@ def main():
         entry_pretty = by_pkg_pretty.get(pkg)
         entry_min = by_pkg_min.get(pkg)
 
+        ext_display_name = info["name"].replace("-", " ").title()
+        sources = [{
+            "name": ext_display_name,
+            "lang": info["lang"],
+            "id": str(abs(hash(pkg)) % (10**16)),
+            "baseUrl": "https://mangaball.net" if "mangaball" in pkg else "",
+        }]
+
         if entry_pretty is None or entry_min is None:
             # New extension — create entry
             entry_pretty = {
+                "name": ext_display_name,
                 "pkg": pkg,
-                "name": info["name"].replace("-", " ").title(),
+                "apk": apk_name,
                 "lang": info["lang"],
                 "code": info["code"],
                 "version": info["version"],
-                "apk": apk_name,
+                "nsfw": 0,
+                "sources": sources,
             }
             entry_min = dict(entry_pretty)
             index_pretty.append(entry_pretty)
@@ -114,6 +124,8 @@ def main():
             changed = True
         else:
             # Update existing
+            entry_pretty["sources"] = sources
+            entry_min["sources"] = sources
             for key in ("code", "version", "apk"):
                 new_val = {"code": info["code"], "version": info["version"], "apk": apk_name}[key]
                 if entry_pretty.get(key) != new_val:
