@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.all.mangaball
 
 import android.util.Log
+import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.network.GET
@@ -356,14 +357,17 @@ abstract class MangaBall :
         }
 
         val data = response.parseAs<ChapterListResponse>()
-
         val seenNumbers = mutableSetOf<Float>()
+        val preferredGroup = preferences.getString(TRANSLATION_GROUP_PREF, "").orEmpty().trim()
         return data.chapters.mapNotNull { chapter ->
             // Each chapter (identified by its number) must appear only once, even when the
             // site exposes multiple translations of the same chapter.
             if (!seenNumbers.add(chapter.number)) return@mapNotNull null
 
-            val translation = chapter.translations.firstOrNull { it.language in siteLang }
+            val translations = chapter.translations.filter { it.language in siteLang }
+            // Pick the preferred group when set, otherwise the best quality translation
+            // (highest volume first, then newest date), so only one best entry is shown per chapter.
+            val translation = selectTranslation(translations, preferredGroup)
                 ?: return@mapNotNull null
 
             SChapter.create().apply {
@@ -467,6 +471,37 @@ abstract class MangaBall :
             summary = "Restart of the app required"
             setDefaultValue(false)
         }.also(screen::addPreference)
+
+        // Translation group selector: "Auto" picks best quality (highest volume, then newest date)
+        val groupEntries = listOf(
+            "Auto" to "auto",
+            "Meganium" to "Meganium",
+            "Swampert" to "Swampert",
+            "Pinsir" to "Pinsir",
+            "Lugia" to "Lugia",
+            "Dodrio" to "Dodrio",
+            "atsu" to "atsu",
+            "mangahub" to "mangahub",
+            "komikindo" to "komikindo",
+            "mangadot" to "mangadot",
+        )
+        ListPreference(screen.context).apply {
+            key = TRANSLATION_GROUP_PREF
+            entryList = groupEntries.map { it.first }.toList()
+            entryValues = groupEntries.map { it.second }.toList()
+            defaultValue = "auto"
+            summary = "Preferred translation group"
+        }.also(screen::addPreference)
+    }
+
+    private fun selectTranslation(translations: List<Chapter>, preferredGroup: String): Chapter? {
+        if (preferredGroup.isNotEmpty() && preferredGroup != "auto") {
+            translations.firstOrNull { it.group.name == preferredGroup }?.let { return it }
+        }
+        return translations.maxWithOrNull(
+            compareBy<Chapter> { it.volume.toInt() }
+                .thenBy { dateFormat.tryParse(it.date) },
+        )
     }
 
     private fun hideNsfwPreference() = preferences.getBoolean(NSFW_PREF, false)
@@ -475,3 +510,5 @@ abstract class MangaBall :
 }
 
 private const val NSFW_PREF = "nsfw_pref"
+private const val PREF_LANG = "preferred_language"
+private const val TRANSLATION_GROUP_PREF = "preferred_translation_group"
