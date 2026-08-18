@@ -4,7 +4,7 @@ contact_links:
     url: https://github.com/mihonapp/mihon/issues/
     about: Issues and requests about the app itself should be opened in Mihon's repository instead
   - name: 📦 Extension list
-    url: https://keiyoushi.github.io/extensions
+    url: https://github.com/arasif10/manga-extensions/tree/main/src
     about: List of all available extensions with download links
   - name: 🖥️ Mihon website
     url: https://mihon.app/docs/guides/troubleshooting/

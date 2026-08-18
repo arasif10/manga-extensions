@@ -1,33 +1,45 @@
-# Keiyoushi Extensions
+# Manga Extensions
+
+Repository of extension sources usable with read apps that support the Tachiyomi/Mihon extension format
+(e.g. Mihon, Tachiyomi, Aniyomi, Kotatsu...). Extensions are installed like regular Android apps, or directly
+through the extension manager of your reader app.
+
+This repo currently hosts the **Manga Ball** extension.
 
 ### Please give the repo a :star:
 
-| Build                                                                                                                                                                               | Need Help?                                                                                                                                              |
-|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [![CI](https://github.com/keiyoushi/extensions-source/actions/workflows/build_push.yml/badge.svg)](https://github.com/keiyoushi/extensions-source/actions/workflows/build_push.yml) | [![Discord](https://img.shields.io/discord/1193460528052453448.svg?label=discord&labelColor=7289da&color=2c2f33&style=flat)](https://discord.gg/3FbCpdKbdY) |
+| Build | Extensions |
+|-------|------------|
+| [![CI](https://github.com/arasif10/manga-extensions/actions/workflows/build_and_publish.yml/badge.svg)](https://github.com/arasif10/manga-extensions/actions/workflows/build_and_publish.yml) | [Manga Ball](https://mangaball.net) |
 
 ## Usage
-**If you are new to repository/extensions, please read the [Keiyoushi Getting Started guide](https://keiyoushi.github.io/docs/guides/getting-started#adding-the-extension-repo) first.**
 
-* You can add our repo by visiting the [Keiyoushi Website](https://keiyoushi.github.io/add-repo)
-* Otherwise, copy & paste the following URL: https://github.com/keiyoushi/extensions/raw/repo/index.pb
+### Adding this repository to your reader app
 
-## Requests
+1. Open your reader app (Mihon / Tachiyomi / Aniyomi ...).
+2. Go to **Settings → Extensions**.
+3. Open the **three-dot menu** (top-right) → **Browse repositories** (or **+ Add repository**).
+4. Paste the following repository URL:
 
-To request a new source or bug fix, [create an issue](https://github.com/keiyoushi/extensions-source/issues/new/choose).
+```
+https://raw.githubusercontent.com/arasif10/manga-extensions/repo/index.min.json
+```
 
-Please note that creating an issue does not mean that the source will be added or fixed in a timely
-fashion, because the work is volunteer-based. Some sources may also be impossible to do or prohibitively
-difficult to maintain.
+5. Save, then browse / install **Manga Ball** from the Extensions list.
 
-If you would like to see a request fulfilled and have the necessary skills to do so, consider contributing!
-Issues are up-for-grabs for any developer if there is no assigned user already.
+> You can also download the extension APK directly from the
+> [`repo` branch](https://github.com/arasif10/manga-extensions/tree/repo/apk).
 
-## Contributing
+## Contents
 
-Contributions are welcome!
+| Name | Status |
+|------|--------|
+| [Manga Ball](https://mangaball.net) | Working |
 
-Check out the repo's [issue backlog](https://github.com/keiyoushi/extensions-source/issues) for source requests and bug reports.
+## Building
+
+Extensions are built and published automatically by GitHub Actions on every push to `main`
+(`.github/workflows/build_and_publish.yml`), then pushed to the `repo` branch.
 
 ## License
 
@@ -47,7 +59,8 @@ Check out the repo's [issue backlog](https://github.com/keiyoushi/extensions-sou
 
 ## Disclaimer
 
-This project does not have any affiliation with the content providers available.
+This project does not have any affiliation with the content providers available (e.g. Manga Ball).
 
-This project is not affiliated with Mihon/Tachiyomi. Don't ask for help about these extensions at the
-official support means of Mihon/Tachiyomi. All credits to the codebase goes to the original contributors.
+This project is not affiliated with Mihon/Tachiyomi/Keiyoushi. Don't ask for help about these extensions at
+the official support means of Mihon/Tachiyomi/Keiyoushi. Credits for the extension API and build system go to
+the original contributors.
