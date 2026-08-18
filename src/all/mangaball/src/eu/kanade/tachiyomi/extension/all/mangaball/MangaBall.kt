@@ -487,9 +487,9 @@ abstract class MangaBall :
         )
         ListPreference(screen.context).apply {
             key = TRANSLATION_GROUP_PREF
-            entryList = groupEntries.map { it.first }.toList()
-            entryValues = groupEntries.map { it.second }.toList()
-            defaultValue = "auto"
+            entries = groupEntries.map { it.first }.toTypedArray()
+            entryValues = groupEntries.map { it.second }.toTypedArray()
+            setDefaultValue("auto")
             summary = "Preferred translation group"
         }.also(screen::addPreference)
     }
