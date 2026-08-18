@@ -357,43 +357,45 @@ abstract class MangaBall :
 
         val data = response.parseAs<ChapterListResponse>()
 
-        return data.chapters.flatMap { chapter ->
-            chapter.translations.mapNotNull { translation ->
-                if (translation.language in siteLang) {
-                    SChapter.create().apply {
-                        url = translation.id
-                        name = buildString {
-                            val volume = translation.volume.toString().removeSuffix(".0")
-                            if (translation.volume > 0) {
-                                append("Vol. ")
-                                append(volume)
-                                append(" ")
-                            }
-                            val number = chapter.number.toString().removeSuffix(".0")
-                            if (translation.name.contains(number)) {
-                                append(translation.name.trim())
-                            } else {
-                                append("Ch. ")
-                                append(number)
-                                append(" ")
-                                append(translation.name.trim())
-                            }
-                        }
-                        chapter_number = chapter.number
-                        date_upload = dateFormat.tryParse(translation.date)
-                        scanlator = buildString {
-                            append(translation.group.name)
-                            // id is usually the name of the site the chapter was scraped from
-                            // if not then it is generated id of an active group on the site
-                            if (groupIdRegex.matchEntire(translation.group.id) == null) {
-                                append(" (")
-                                append(translation.group.id)
-                                append(")")
-                            }
-                        }
+        val seenNumbers = mutableSetOf<Float>()
+        return data.chapters.mapNotNull { chapter ->
+            // Each chapter (identified by its number) must appear only once, even when the
+            // site exposes multiple translations of the same chapter.
+            if (!seenNumbers.add(chapter.number)) return@mapNotNull null
+
+            val translation = chapter.translations.firstOrNull { it.language in siteLang }
+                ?: return@mapNotNull null
+
+            SChapter.create().apply {
+                url = translation.id
+                name = buildString {
+                    val volume = translation.volume.toString().removeSuffix(".0")
+                    if (translation.volume > 0) {
+                        append("Vol. ")
+                        append(volume)
+                        append(" ")
                     }
-                } else {
-                    null
+                    val number = chapter.number.toString().removeSuffix(".0")
+                    if (translation.name.contains(number)) {
+                        append(translation.name.trim())
+                    } else {
+                        append("Ch. ")
+                        append(number)
+                        append(" ")
+                        append(translation.name.trim())
+                    }
+                }
+                chapter_number = chapter.number
+                date_upload = dateFormat.tryParse(translation.date)
+                scanlator = buildString {
+                    append(translation.group.name)
+                    // id is usually the name of the site the chapter was scraped from
+                    // if not then it is generated id of an active group on the site
+                    if (groupIdRegex.matchEntire(translation.group.id) == null) {
+                        append(" (")
+                        append(translation.group.id)
+                        append(")")
+                    }
                 }
             }
         }
