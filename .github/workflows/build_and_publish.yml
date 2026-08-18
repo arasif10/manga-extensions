@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
   KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
