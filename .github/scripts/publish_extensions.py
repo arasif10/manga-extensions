@@ -3,11 +3,18 @@
 
 For every release APK it:
   - copies the APK into <repo>/apk/
-  - updates or adds the entry in index.json / index.min.json
+  - updates or adds the entry in index.json / index.min.json  (legacy Tachiyomi/Mihon format)
+  - generates repo.json + store.json                        (Komikku / new store format)
   - copies the extension icon to <repo>/icon/
+
+Komikku flow (paste the index.min.json URL in the app):
+  index.min.json (starts with "[") -> Komikku fetches repo.json next to it
+  repo.json -> {"index_v2": "…/store.json", "meta": {...}}
+  store.json -> new-format store with an absolute apkUrl/iconUrl per extension
 """
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -16,6 +23,16 @@ import sys
 from pathlib import Path
 
 APK_RE = re.compile(r"^tachiyomi-(\w+)\.([\w.-]+)-v(\d+\.\d+\.\d+)\.apk$")
+
+# GitHub repository that hosts the published extensions.
+REPO_OWNER = "arasif10"
+REPO_NAME = "manga-extensions"
+REPO_BRANCH = "repo"
+RAW_BASE = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}"
+
+# SHA-256 certificate digest of the signing keystore (arasif-release.jks, alias "arasif").
+# Must match the key used by CI to sign the release APKs so apps auto-trust the extension.
+SIGNING_KEY_FINGERPRINT = "bb3e15a4c4d43da5bde85a3d6d24bb519b7414b5d9039c0a5fbc60baf489186f"
 
 
 def find_apks(apk_dir: Path):
@@ -65,6 +82,70 @@ def write_json(path: Path, data, minified: bool):
             f.write("\n")
 
 
+def compute_source_id(pkg: str) -> int:
+    """Deterministic, stable source id (no Python hash randomization)."""
+    digest = hashlib.md5(pkg.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+
+
+def write_komikku_store(repo: Path, apks: dict):
+    """Generate repo.json + store.json for Komikku / new-format readers."""
+    # Legacy bridge: points the app from index.min.json to the new store.
+    repo_json = {
+        "index_v2": f"{RAW_BASE}/store.json",
+        "meta": {
+            "name": "Manga Extensions",
+            "shortName": "manga-extensions",
+            "website": f"https://github.com/{REPO_OWNER}/{REPO_NAME}",
+            "signingKeyFingerprint": SIGNING_KEY_FINGERPRINT,
+        },
+    }
+
+    extensions = []
+    for pkg, info in apks.items():
+        apk_name = f"tachiyomi-{info['lang']}.{info['name']}-v{info['version']}.apk"
+        ext_display_name = info["name"].replace("-", " ").title()
+        base_url = "https://mangaball.net" if "mangaball" in pkg else ""
+        lib_version = info["version"].rsplit(".", 1)[0]
+        extensions.append(
+            {
+                "name": ext_display_name,
+                "packageName": pkg,
+                "resources": {
+                    "apkUrl": f"{RAW_BASE}/apk/{apk_name}",
+                    "iconUrl": f"{RAW_BASE}/icon/{pkg}.png",
+                },
+                "extensionLib": lib_version,
+                "versionCode": info["code"],
+                "versionName": info["version"],
+                "contentWarning": "CONTENT_WARNING_MIXED",
+                "sources": [
+                    {
+                        "id": compute_source_id(pkg),
+                        "name": "Mangaball",
+                        "language": "all",
+                        "homeUrl": base_url,
+                    },
+                ],
+            },
+        )
+
+    store_json = {
+        "name": "Manga Extensions",
+        "badgeLabel": "manga-extensions",
+        "signingKey": SIGNING_KEY_FINGERPRINT,
+        "contact": {
+            "website": f"https://github.com/{REPO_OWNER}/{REPO_NAME}",
+            "discord": None,
+        },
+        "extensionList": {"extensions": extensions},
+    }
+
+    write_json(repo / "repo.json", repo_json, minified=False)
+    write_json(repo / "store.json", store_json, minified=False)
+    print("repo.json and store.json updated.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Publish manga extensions to repo branch")
     parser.add_argument("--apk-dir", required=True, help="Directory with built APKs")
@@ -97,12 +178,15 @@ def main():
         entry_min = by_pkg_min.get(pkg)
 
         ext_display_name = info["name"].replace("-", " ").title()
-        sources = [{
-            "name": ext_display_name,
-            "lang": info["lang"],
-            "id": str(abs(hash(pkg)) % (10**16)),
-            "baseUrl": "https://mangaball.net" if "mangaball" in pkg else "",
-        }]
+        source_id = compute_source_id(pkg)
+        sources = [
+            {
+                "name": ext_display_name,
+                "lang": info["lang"],
+                "id": str(source_id),
+                "baseUrl": "https://mangaball.net" if "mangaball" in pkg else "",
+            },
+        ]
 
         if entry_pretty is None or entry_min is None:
             # New extension — create entry
@@ -124,8 +208,10 @@ def main():
             changed = True
         else:
             # Update existing
-            entry_pretty["sources"] = sources
-            entry_min["sources"] = sources
+            if entry_pretty.get("sources") != sources:
+                entry_pretty["sources"] = sources
+                entry_min["sources"] = sources
+                changed = True
             for key in ("code", "version", "apk"):
                 new_val = {"code": info["code"], "version": info["version"], "apk": apk_name}[key]
                 if entry_pretty.get(key) != new_val:
@@ -164,6 +250,10 @@ def main():
                 changed = True
             print(f"  -> icon/{pkg}.png")
 
+    # Always refresh the Komikku files so they stay in sync with the current build.
+    write_komikku_store(repo, apks)
+    changed = True
+
     if not changed:
         print("No changes needed.")
         return
@@ -176,3 +266,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

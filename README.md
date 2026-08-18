@@ -30,6 +30,14 @@ https://raw.githubusercontent.com/arasif10/manga-extensions/repo/index.min.json
 > You can also download the extension APK directly from the
 > [`repo` branch](https://github.com/arasif10/manga-extensions/tree/repo/apk).
 
+This repository works with **Mihon / Tachiyomi** (legacy `index.min.json` format) as well as
+**Komikku** and other new-format readers (via `repo.json` / `store.json`, which are generated
+automatically on every build).
+
+**Komikku users:** paste the same URL above. If you previously installed the extension from an
+older build (which was signed with a temporary debug key), uninstall it once first, then reinstall
+from the repo — after that all updates install seamlessly.
+
 ## Contents
 
 | Name | Status |
