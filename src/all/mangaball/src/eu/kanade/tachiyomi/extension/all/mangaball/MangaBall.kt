@@ -357,50 +357,71 @@ abstract class MangaBall :
         }
 
         val data = response.parseAs<ChapterListResponse>()
-        val seenNumbers = mutableSetOf<Float>()
-        val preferredGroup = preferences.getString(TRANSLATION_GROUP_PREF, "").orEmpty().trim()
-        return data.chapters.mapNotNull { chapter ->
-            // Each chapter (identified by its number) must appear only once, even when the
-            // site exposes multiple translations of the same chapter.
-            if (!seenNumbers.add(chapter.number)) return@mapNotNull null
+        val mode = preferences.getString(TRANSLATION_GROUP_PREF, "auto").orEmpty().trim()
 
-            val translations = chapter.translations.filter { it.language in siteLang }
-            // Pick the preferred group when set, otherwise the best quality translation
-            // (highest volume first, then newest date), so only one best entry is shown per chapter.
-            val translation = selectTranslation(translations, preferredGroup)
-                ?: return@mapNotNull null
+        return when (mode) {
+            "all" -> {
+                // Show all translations from all sources (duplicates visible)
+                data.chapters.flatMap { chapter ->
+                    chapter.translations
+                        .filter { it.language in siteLang }
+                        .map { translation -> buildChapter(chapter, translation) }
+                }
+            }
+            "auto" -> {
+                // Pick best quality per chapter number (no duplicates)
+                val seenNumbers = mutableSetOf<Float>()
+                data.chapters.mapNotNull { chapter ->
+                    if (!seenNumbers.add(chapter.number)) return@mapNotNull null
+                    val translations = chapter.translations.filter { it.language in siteLang }
+                    val translation = translations.maxWithOrNull(
+                        compareBy<Chapter> { it.volume.toInt() }
+                            .thenBy { dateFormat.tryParse(it.date) },
+                    ) ?: return@mapNotNull null
+                    buildChapter(chapter, translation)
+                }
+            }
+            else -> {
+                // Filter to a specific translation group
+                data.chapters.mapNotNull { chapter ->
+                    val translations = chapter.translations.filter {
+                        it.language in siteLang && it.group.name.equals(mode, ignoreCase = true)
+                    }
+                    val translation = translations.firstOrNull()
+                        ?: return@mapNotNull null
+                    buildChapter(chapter, translation)
+                }
+            }
+        }
+    }
 
-            SChapter.create().apply {
-                url = translation.id
-                name = buildString {
-                    val volume = translation.volume.toString().removeSuffix(".0")
-                    if (translation.volume > 0) {
-                        append("Vol. ")
-                        append(volume)
-                        append(" ")
-                    }
-                    val number = chapter.number.toString().removeSuffix(".0")
-                    if (translation.name.contains(number)) {
-                        append(translation.name.trim())
-                    } else {
-                        append("Ch. ")
-                        append(number)
-                        append(" ")
-                        append(translation.name.trim())
-                    }
-                }
-                chapter_number = chapter.number
-                date_upload = dateFormat.tryParse(translation.date)
-                scanlator = buildString {
-                    append(translation.group.name)
-                    // id is usually the name of the site the chapter was scraped from
-                    // if not then it is generated id of an active group on the site
-                    if (groupIdRegex.matchEntire(translation.group.id) == null) {
-                        append(" (")
-                        append(translation.group.id)
-                        append(")")
-                    }
-                }
+    private fun buildChapter(chapter: ChapterContainer, translation: Chapter): SChapter = SChapter.create().apply {
+        url = translation.id
+        name = buildString {
+            val volume = translation.volume.toString().removeSuffix(".0")
+            if (translation.volume > 0) {
+                append("Vol. ")
+                append(volume)
+                append(" ")
+            }
+            val number = chapter.number.toString().removeSuffix(".0")
+            if (translation.name.contains(number)) {
+                append(translation.name.trim())
+            } else {
+                append("Ch. ")
+                append(number)
+                append(" ")
+                append(translation.name.trim())
+            }
+        }
+        chapter_number = chapter.number
+        date_upload = dateFormat.tryParse(translation.date)
+        scanlator = buildString {
+            append(translation.group.name)
+            if (groupIdRegex.matchEntire(translation.group.id) == null) {
+                append(" (")
+                append(translation.group.id)
+                append(")")
             }
         }
     }
@@ -472,9 +493,13 @@ abstract class MangaBall :
             setDefaultValue(false)
         }.also(screen::addPreference)
 
-        // Translation group selector: "Auto" picks best quality (highest volume, then newest date)
+        // Chapter source filter:
+        //   Auto (Best Quality) – pick highest quality per chapter (no duplicates)
+        //   All Sources          – show every translation (duplicates visible)
+        //   <Source Name>        – only show chapters from that translation group
         val groupEntries = listOf(
-            "Auto" to "auto",
+            "Auto (Best Quality)" to "auto",
+            "All Sources" to "all",
             "Meganium" to "Meganium",
             "Swampert" to "Swampert",
             "Pinsir" to "Pinsir",
@@ -490,18 +515,8 @@ abstract class MangaBall :
             entries = groupEntries.map { it.first }.toTypedArray()
             entryValues = groupEntries.map { it.second }.toTypedArray()
             setDefaultValue("auto")
-            summary = "Preferred translation group"
+            summary = "Auto = best quality, All Sources = show duplicates"
         }.also(screen::addPreference)
-    }
-
-    private fun selectTranslation(translations: List<Chapter>, preferredGroup: String): Chapter? {
-        if (preferredGroup.isNotEmpty() && preferredGroup != "auto") {
-            translations.firstOrNull { it.group.name == preferredGroup }?.let { return it }
-        }
-        return translations.maxWithOrNull(
-            compareBy<Chapter> { it.volume.toInt() }
-                .thenBy { dateFormat.tryParse(it.date) },
-        )
     }
 
     private fun hideNsfwPreference() = preferences.getBoolean(NSFW_PREF, false)
