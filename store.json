@@ -12,12 +12,12 @@
         "name": "Mangaball",
         "packageName": "eu.kanade.tachiyomi.extension.all.mangaball",
         "resources": {
-          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-all.mangaball-v1.4.5.apk",
+          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-all.mangaball-v1.4.7.apk",
           "iconUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/icon/eu.kanade.tachiyomi.extension.all.mangaball.png"
         },
         "extensionLib": "1.4",
-        "versionCode": 10405,
-        "versionName": "1.4.5",
+        "versionCode": 10407,
+        "versionName": "1.4.7",
         "contentWarning": "CONTENT_WARNING_MIXED",
         "sources": [
           {
