@@ -374,18 +374,20 @@ abstract class MangaBall :
                 data.chapters.mapNotNull { chapter ->
                     if (!seenNumbers.add(chapter.number)) return@mapNotNull null
                     val translations = chapter.translations.filter { it.language in siteLang }
-                    val translation = translations.maxWithOrNull(
-                        compareBy<Chapter> { it.volume.toInt() }
-                            .thenBy { dateFormat.tryParse(it.date) },
-                    ) ?: return@mapNotNull null
+                    val translation = pickBestTranslation(translations)
+                        ?: return@mapNotNull null
                     buildChapter(chapter, translation)
                 }
             }
             else -> {
                 // Filter to a specific translation group
                 data.chapters.mapNotNull { chapter ->
-                    val translations = chapter.translations.filter {
-                        it.language in siteLang && it.group.name.equals(mode, ignoreCase = true)
+                    val translations = chapter.translations.filter { translation ->
+                        translation.language in siteLang &&
+                            (
+                                translation.group.id.equals(mode, ignoreCase = true) ||
+                                    translation.group.name.replace(" ", "").equals(mode, ignoreCase = true)
+                                )
                     }
                     val translation = translations.firstOrNull()
                         ?: return@mapNotNull null
@@ -394,6 +396,44 @@ abstract class MangaBall :
             }
         }
     }
+
+    /**
+     * Best-quality picker for "auto" mode. Quality cannot be measured from the API
+     * (no page counts), so we prefer, in order:
+     *  1. a translation from a known high-quality group (see [autoQualityGroups]),
+     *  2. the most recent upload (a newer scan normally replaces an older one),
+     *  3. the one with the highest volume.
+     */
+    private fun pickBestTranslation(translations: List<Chapter>): Chapter? = translations.maxWithOrNull(
+        compareBy<Chapter> { trans ->
+            val idx = autoQualityGroups.indexOfFirst { token ->
+                trans.group.name.contains(token, ignoreCase = true) ||
+                    trans.group.id.contains(token, ignoreCase = true)
+            }
+            if (idx == -1) -1 else autoQualityGroups.size - idx
+        }
+            .thenBy { dateFormat.tryParse(it.date) }
+            .thenBy { it.volume.toInt() },
+    )
+
+    // Translation groups whose releases are generally the cleanest/clearest.
+    // Earlier in the list = higher quality. Auto mode prefers these over anything else
+    // (the site name appears in group.id, e.g. "mangadistrict").
+    private val autoQualityGroups = listOf(
+        "mangadistrict",
+        "manga district",
+        "mangadot",
+        "manga dot",
+        "meganium",
+        "swampert",
+        "pinsir",
+        "lugia",
+        "dodrio",
+        "atsu",
+        "mangahub",
+        "manga hub",
+        "komikindo",
+    )
 
     private fun buildChapter(chapter: ChapterContainer, translation: Chapter): SChapter = SChapter.create().apply {
         url = translation.id
@@ -500,6 +540,7 @@ abstract class MangaBall :
         val groupEntries = listOf(
             "Auto (Best Quality)" to "auto",
             "All Sources" to "all",
+            "MangaDistrict" to "mangadistrict",
             "Meganium" to "Meganium",
             "Swampert" to "Swampert",
             "Pinsir" to "Pinsir",
@@ -512,10 +553,11 @@ abstract class MangaBall :
         )
         ListPreference(screen.context).apply {
             key = TRANSLATION_GROUP_PREF
+            title = "Translation source"
             entries = groupEntries.map { it.first }.toTypedArray()
             entryValues = groupEntries.map { it.second }.toTypedArray()
             setDefaultValue("auto")
-            summary = "Auto = best quality, All Sources = show duplicates"
+            summary = "Pick a translation group (Auto = best quality, All = show duplicates). Current: %s"
         }.also(screen::addPreference)
     }
 
