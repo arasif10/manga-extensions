@@ -1,571 +1,310 @@
 package eu.kanade.tachiyomi.extension.all.mangaball
 
-import android.util.Log
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
-import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.network.asObservableSuccess
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import keiyoushi.annotation.Source
-import keiyoushi.network.addCookie
+import keiyoushi.network.get
+import keiyoushi.network.post
+import keiyoushi.source.KeiSource
 import keiyoushi.utils.firstInstance
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.tryParse
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.FormBody
+import keiyoushi.utils.toJsonString
+import kotlinx.serialization.json.JsonElement
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Request
-import okhttp3.Response
-import okhttp3.internal.closeQuietly
-import okio.IOException
-import org.jsoup.nodes.Document
-import rx.Observable
-import java.lang.UnsupportedOperationException
-import java.text.SimpleDateFormat
-import java.util.Locale
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody
+import okio.BufferedSink
+import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * The public site is a Next.js frontend; everything here actually talks to the JSON API on
+ * api.mangaball.com, which is addressed by title slug for browsing and by Mongo title id for
+ * chapter listings.
+ */
 @Source
 abstract class MangaBall :
-    HttpSource(),
+    KeiSource(),
     ConfigurableSource {
 
-    private val siteLang: List<String>
-        get() = when (lang) {
-            "ar" -> listOf("ar")
-            "bg" -> listOf("bg")
-            "bn" -> listOf("bn")
-            "ca" -> listOf("ca", "ca-ad", "ca-es", "ca-fr", "ca-it", "ca-pt")
-            "cs" -> listOf("cs")
-            "da" -> listOf("da")
-            "de" -> listOf("de")
-            "el" -> listOf("el")
-            "en" -> listOf("en")
-            "es" -> listOf("es", "es-ar", "es-mx", "es-es", "es-la", "es-419")
-            "fa" -> listOf("fa")
-            "fi" -> listOf("fi")
-            "fr" -> listOf("fr")
-            "he" -> listOf("he")
-            "hi" -> listOf("hi")
-            "hu" -> listOf("hu")
-            "id" -> listOf("id")
-            "it" -> listOf("it", "it-it")
-            "is" -> listOf("ib", "ib-is", "is")
-            "ja" -> listOf("jp")
-            "ko" -> listOf("kr")
-            "kn" -> listOf("kn", "kn-in", "kn-my", "kn-sg", "kn-tw")
-            "ml" -> listOf("ml", "ml-in", "ml-my", "ml-sg", "ml-tw")
-            "ms" -> listOf("ms")
-            "ne" -> listOf("ne")
-            "nl" -> listOf("nl", "nl-be")
-            "no" -> listOf("no")
-            "pl" -> listOf("pl")
-            "pt-BR" -> listOf("pt-br", "pt-pt")
-            "ro" -> listOf("ro")
-            "ru" -> listOf("ru")
-            "sk" -> listOf("sk")
-            "sl" -> listOf("sl")
-            "sq" -> listOf("sq")
-            "sr" -> listOf("sr", "sr-cyrl")
-            "sv" -> listOf("sv")
-            "ta" -> listOf("ta")
-            "th" -> listOf("th", "th-hk", "th-kh", "th-la", "th-my", "th-sg")
-            "tr" -> listOf("tr")
-            "uk" -> listOf("uk")
-            "vi" -> listOf("vi")
-            "zh" -> listOf("zh", "zh-cn", "zh-hk", "zh-mo", "zh-sg", "zh-tw")
-            else -> listOf(lang)
-        }
-
-    override val supportsLatest = true
     private val preferences by getPreferencesLazy()
 
-    override val client = network.client.newBuilder()
-        .addCookie { listOf("show18PlusContent" to hideNsfwPreference().not().toString()) }
-        .addInterceptor { chain ->
-            var request = chain.request()
-            if (request.url.pathSegments[0] == "api") {
-                request = request.newBuilder()
-                    .header("X-Requested-With", "XMLHttpRequest")
-                    .header("X-CSRF-TOKEN", getCSRF())
-                    .build()
+    private val adultMode: String
+        get() = if (preferences.getBoolean(NSFW_PREF, false)) "no_18" else "all"
 
-                val response = chain.proceed(request)
-                if (!response.isSuccessful && response.code == 403) {
-                    response.close()
-                    updateCSRF()
-                    request = request.newBuilder()
-                        .header("X-CSRF-TOKEN", getCSRF())
-                        .build()
+    private val titleIds = ConcurrentHashMap<String, String>()
 
-                    chain.proceed(request)
-                } else {
-                    response
-                }
-            } else {
-                chain.proceed(request)
-            }
-        }
-        .build()
+    override suspend fun getPopularManga(page: Int): MangasPage = getSearchMangaList(page, "", filtersSortedBy(SortFilter.MOST_VIEWED))
 
-    private var csrf: String? = null
+    override suspend fun getLatestUpdates(page: Int): MangasPage = getSearchMangaList(page, "", filtersSortedBy(SortFilter.LATEST_UPDATE))
 
-    @Synchronized
-    private fun updateCSRF(document: Document? = null) {
-        val doc = document ?: client.newCall(
-            GET(baseUrl, headers),
-        ).execute().asJsoup()
-
-        doc.selectFirst("meta[name=csrf-token]")
-            ?.attr("content")
-            ?.takeIf { it.isNotBlank() }
-            ?.also { csrf = it }
+    /** Browse is the same search endpoint, just with a fixed sort and no query. */
+    private fun filtersSortedBy(sortIndex: Int) = getFilterList(null).apply {
+        firstInstance<SortFilter>().state = sortIndex
     }
 
-    @Synchronized
-    private fun getCSRF(): String {
-        if (csrf == null) {
-            updateCSRF()
-        }
-
-        return csrf ?: throw Exception("CSRF token not found")
-    }
-
-    override fun headersBuilder() = super.headersBuilder()
-        .set("Referer", "$baseUrl/")
-
-    override fun popularMangaRequest(page: Int): Request {
-        val filters = getFilterList().apply {
-            firstInstance<SortFilter>().state = 6
-        }
-
-        return searchMangaRequest(page, "", filters)
-    }
-
-    override fun popularMangaParse(response: Response) = searchMangaParse(response)
-
-    override fun latestUpdatesRequest(page: Int) = searchMangaRequest(page, "", getFilterList())
-
-    override fun latestUpdatesParse(response: Response) = searchMangaParse(response)
-
-    override fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
-        if (query.startsWith("https://")) {
-            return deepLink(query)
-        }
-
-        val defaultFilterState = run {
-            filters.filterIsInstance<TriStateGroupFilter<String>>().all { filter -> filter.state.all { it.isIgnored() } } &&
-                filters.firstInstance<DemographicFilter>().state == 0 &&
-                filters.firstInstance<StatusFilter>().state == 0
-        }
-
-        if (query.isNotBlank() && defaultFilterState) {
-            return if (page == 1) {
-                querySearch(query)
-            } else {
-                super.fetchSearchManga(page - 1, query, filters)
-            }
-        }
-
-        return super.fetchSearchManga(page, query, filters)
-    }
-
-    private fun querySearch(query: String): Observable<MangasPage> {
-        val url = "$baseUrl/api/v1/smart-search/search/"
-        val body = FormBody.Builder()
-            .add("search_input", query.trim())
-            .build()
-
-        return client.newCall(POST(url, headers, body))
-            .asObservableSuccess()
-            .map {
-                val mangas = it.parseAs<QuerySearchResponse>().data.manga
-                    .map { manga ->
-                        SManga.create().apply {
-                            this.url = "$baseUrl${manga.url}".toHttpUrl().pathSegments[1]
-                            title = manga.title
-                            thumbnail_url = manga.img
-                        }
-                    }
-
-                MangasPage(mangas, true)
-            }
-    }
-
-    override fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-        val body = FormBody.Builder().apply {
-            add("search_input", query.trim())
-            add("filters[sort]", filters.firstInstance<SortFilter>().selected)
-            add("filters[page]", page.toString())
-            filters.filterIsInstance<TriStateGroupFilter<String>>().forEach { tags ->
-                tags.included.forEach { tag ->
-                    add("filters[tag_included_ids][]", tag)
-                }
-            }
-            add("filters[tag_included_mode]", filters.firstInstance<TagIncludeMode>().selected)
-            filters.filterIsInstance<TriStateGroupFilter<String>>().forEach { tags ->
-                tags.excluded.forEach { tag ->
-                    add("filters[tag_excluded_ids][]", tag)
-                }
-            }
-            add("filters[tag_excluded_mode]", filters.firstInstance<TagExcludeMode>().selected)
-            add("filters[contentRating]", "any")
-            add("filters[demographic]", filters.firstInstance<DemographicFilter>().selected)
-            add("filters[person]", "any")
-            add("filters[publicationYear]", "")
-            add("filters[publicationStatus]", filters.firstInstance<StatusFilter>().selected)
-            siteLang.forEach {
-                add("filters[translatedLanguage][]", it)
-            }
-        }.build()
-
-        return POST("$baseUrl/api/v1/title/search-advanced/", headers, body)
-    }
-
-    override fun getFilterList() = FilterList(
+    override fun getFilterList(data: JsonElement?) = FilterList(
         SortFilter(),
+        SortOrderFilter(),
+        TagModeFilter(),
         DemographicFilter(),
         StatusFilter(),
+        OriginFilter(),
         ContentFilter(),
         FormatFilter(),
         GenreFilter(),
-        OriginFilter(),
         ThemeFilter(),
-        TagIncludeMode(),
-        TagExcludeMode(),
     )
 
-    override fun searchMangaParse(response: Response): MangasPage {
-        val data = response.parseAs<SearchResponse>()
+    override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
+        val url = "$API_URL/title/search-advanced".toHttpUrl().newBuilder()
+            .addQueryParameter("page", page.toString())
+            .addQueryParameter("limit", PAGE_SIZE.toString())
+            .addQueryParameter("keyword", query)
+            .addQueryParameter("adult_mode", adultMode)
+            .addQueryParameter("use_user_settings", "false")
+            .addQueryParameter("sort_by", filters.firstInstance<SortFilter>().selected)
+            .addQueryParameter("sort_order", filters.firstInstance<SortOrderFilter>().selected)
+            .addQueryParameter("tag_mode", filters.firstInstance<TagModeFilter>().selected)
 
-        val mangas = data.data
-            .map {
-                SManga.create().apply {
-                    url = it.url.toHttpUrl().pathSegments[1]
-                    title = it.name
-                    thumbnail_url = it.cover
-                }
-            }
+        filters.firstInstance<StatusFilter>().selected
+            .takeIf { it.isNotEmpty() }
+            ?.let { url.addQueryParameter("status", it) }
+        filters.firstInstance<OriginFilter>().selected
+            .takeIf { it.isNotEmpty() }
+            ?.let { url.addQueryParameter("original_language", it) }
+        filters.firstInstance<DemographicFilter>().selected
+            .takeIf { it.isNotEmpty() }
+            ?.let { url.addQueryParameter("demographic", it) }
 
-        return MangasPage(mangas, data.hasNextPage())
+        val tagGroups = filters.filterIsInstance<TagGroupFilter>()
+        tagGroups.flatMap { it.included }
+            .takeIf { it.isNotEmpty() }
+            ?.let { url.addQueryParameter("included_tags", it.joinToString(",")) }
+        tagGroups.flatMap { it.excluded }
+            .takeIf { it.isNotEmpty() }
+            ?.let { url.addQueryParameter("excluded_tags", it.joinToString(",")) }
+
+        return client.get(url.build()).parseAs<SearchResponse>().toMangasPage()
     }
 
-    private fun deepLink(url: String): Observable<MangasPage> {
-        val httpUrl = url.toHttpUrl()
-        if (
-            httpUrl.host == baseUrl.toHttpUrl().host &&
-            httpUrl.pathSegments.size >= 2 &&
-            httpUrl.pathSegments[0] in listOf("title-detail", "chapter-detail")
-        ) {
-            val slug = if (httpUrl.pathSegments[0] == "title-detail") {
-                httpUrl.pathSegments[1]
-            } else {
-                client.newCall(GET(httpUrl, headers)).execute()
-                    .use { response ->
-                        response.asJsoup()
-                            .selectFirst(".yoast-schema-graph")!!.data()
-                            .parseAs<Yoast>()
-                            .graph.first { it.type == "WebPage" }
-                            .url!!.toHttpUrl()
-                            .pathSegments[1]
-                    }
+    override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
+        val slugOrId = when (url.pathSegments.firstOrNull()) {
+            "title-detail" -> url.pathSegments.getOrNull(1)
+            // Chapter links only carry the chapter id, so the owning title is looked up first.
+            "chapter-detail" -> url.pathSegments.getOrNull(1)?.let { chapterId ->
+                client.get("$API_URL/chapter-detail?chapter_id=$chapterId")
+                    .parseAs<ChapterDetailResponse>().data.chapter.titleId
             }
+            else -> null
+        } ?: return null
 
-            val manga = SManga.create().apply {
-                this.url = slug
-            }
-
-            return fetchMangaDetails(manga).map {
-                MangasPage(listOf(it), false)
-            }
-        }
-
-        throw Exception("Unsupported url")
+        return loadMangaDetails(SManga.create().apply { this.url = slugOrId })
     }
 
-    override fun mangaDetailsRequest(manga: SManga): Request = GET(getMangaUrl(manga), headers)
+    override suspend fun fetchMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
+        // The chapter endpoint is keyed by the Mongo id, which only the details response returns,
+        // so a chapter-only update is the one case that skips the details request.
+        val updated = if (fetchDetails) loadMangaDetails(manga) else manga
 
-    override fun getMangaUrl(manga: SManga): String = "$baseUrl/title-detail/${manga.url}/"
+        return SMangaUpdate(
+            manga = updated,
+            chapters = if (fetchChapters) loadChapterList(updated.url) else chapters,
+        )
+    }
 
-    override fun mangaDetailsParse(response: Response): SManga {
-        val document = response.asJsoup()
-        updateCSRF(document)
+    private suspend fun loadMangaDetails(manga: SManga): SManga {
+        val detail = client.get("$API_URL/title/detail/${manga.url}").parseAs<TitleDetailResponse>().data
 
-        return SManga.create().apply {
-            url = document.location().toHttpUrl().pathSegments[1]
-            title = document.selectFirst("#comicDetail h6")!!.ownText()
-            thumbnail_url = document.selectFirst("img.featured-cover")?.absUrl("src")
-            genre = buildList {
-                document.selectFirst("#featuredComicsCarousel img[src*=/flags/]")
-                    ?.attr("src")?.also {
-                        when {
-                            it.contains("jp") -> add("Manga")
-                            it.contains("kr") -> add("Manhwa")
-                            it.contains("cn") -> add("Manhua")
-                        }
-                    }
-                document.select("#comicDetail span[data-tag-id]")
-                    .mapTo(this) { it.ownText() }
-            }.joinToString()
-            author = document.select("#comicDetail span[data-person-id]")
-                .eachText().joinToString()
-            description = buildString {
-                document.selectFirst("#descriptionContent p")
-                    ?.also { append(it.wholeText()) }
-                document.selectFirst("#comicDetail span.badge:contains(Published)")
-                    ?.also { append("\n\n", it.text()) }
-                val titles = document.select("div.alternate-name-container").text().split("/")
-                if (titles.isNotEmpty()) {
-                    append("\n\nAlternative Names: \n")
-                    titles.forEach {
-                        append("- ", it.trim(), "\n")
-                    }
-                }
-            }.trim()
-            status = when (document.selectFirst("span.badge-status")?.text()) {
-                "Ongoing" -> SManga.ONGOING
-                "Completed" -> SManga.COMPLETED
-                "Hiatus" -> SManga.ON_HIATUS
-                "Cancelled" -> SManga.CANCELLED
-                else -> SManga.UNKNOWN
-            }
+        // Older library entries stored "<slug>-<id>", so both keys are cached to keep the
+        // chapter listing free of an extra lookup.
+        titleIds[manga.url] = detail.id
+        titleIds[detail.slug] = detail.id
+
+        return detail.toSManga()
+    }
+
+    override fun getMangaUrl(manga: SManga) = "$baseUrl/title-detail/${manga.url}"
+
+    private suspend fun loadChapterList(url: String): List<SChapter> {
+        val body = JsonBody(ChapterListRequest(titleIdFor(url)).toJsonString())
+        val chapters = client.post("$API_URL/chapter/chapter-listing-by-title-id", body)
+            .parseAs<ChapterListResponse>().data
+            .filter { it.lang == null || it.lang in siteLang }
+
+        return when (val mode = preferences.getString(CHAPTER_SOURCE_PREF, PREF_AUTO).orEmpty()) {
+            PREF_ALL -> chapters.map(Chapter::toSChapter)
+            PREF_AUTO, "" -> bestTranslationPerNumber(chapters)
+            else -> chapters.filter { mode in it.sourceNames }
+                .map(Chapter::toSChapter)
+                // Never open with an empty chapter list when the chosen group has not picked
+                // this title up: fall back to the best available translation.
+                .ifEmpty { bestTranslationPerNumber(chapters) }
         }
     }
 
-    override fun chapterListRequest(manga: SManga): Request {
-        val id = manga.url.substringAfterLast("-")
-        val body = FormBody.Builder()
-            .add("title_id", id)
-            .build()
+    private fun bestTranslationPerNumber(chapters: List<Chapter>): List<SChapter> = chapters
+        .groupBy { it.chapterNumber }
+        .mapNotNull { (_, translations) -> pickBestTranslation(translations)?.toSChapter() }
 
-        return POST("$baseUrl/api/v1/chapter/chapter-listing-by-title-id/", headers, body)
-    }
-
-    override fun chapterListParse(response: Response): List<SChapter> {
-        (response.request.body as FormBody).also {
-            updateViews(it.value(0))
-        }
-
-        val data = response.parseAs<ChapterListResponse>()
-        val mode = preferences.getString(TRANSLATION_GROUP_PREF, "auto").orEmpty().trim()
-
-        return when (mode) {
-            "all" -> {
-                // Show all translations from all sources (duplicates visible)
-                data.chapters.flatMap { chapter ->
-                    chapter.translations
-                        .filter { it.language in siteLang }
-                        .map { translation -> buildChapter(chapter, translation) }
-                }
-            }
-            "auto" -> {
-                // Pick best quality per chapter number (no duplicates)
-                val seenNumbers = mutableSetOf<Float>()
-                data.chapters.mapNotNull { chapter ->
-                    if (!seenNumbers.add(chapter.number)) return@mapNotNull null
-                    val translations = chapter.translations.filter { it.language in siteLang }
-                    val translation = pickBestTranslation(translations)
-                        ?: return@mapNotNull null
-                    buildChapter(chapter, translation)
-                }
-            }
-            else -> {
-                // Filter to a specific translation group
-                data.chapters.mapNotNull { chapter ->
-                    val translations = chapter.translations.filter { translation ->
-                        translation.language in siteLang &&
-                            (
-                                translation.group.id.equals(mode, ignoreCase = true) ||
-                                    translation.group.name.replace(" ", "").equals(mode, ignoreCase = true)
-                                )
-                    }
-                    val translation = translations.firstOrNull()
-                        ?: return@mapNotNull null
-                    buildChapter(chapter, translation)
-                }
-            }
-        }
-    }
-
-    /**
-     * Best-quality picker for "auto" mode. Quality cannot be measured from the API
-     * (no page counts), so we prefer, in order:
-     *  1. a translation from a known high-quality group (see [autoQualityGroups]),
-     *  2. the most recent upload (a newer scan normally replaces an older one),
-     *  3. the one with the highest volume.
-     */
+    /** The API exposes no page counts, so a known-good group wins over the newest upload. */
     private fun pickBestTranslation(translations: List<Chapter>): Chapter? = translations.maxWithOrNull(
-        compareBy<Chapter> { trans ->
-            val idx = autoQualityGroups.indexOfFirst { token ->
-                trans.group.name.contains(token, ignoreCase = true) ||
-                    trans.group.id.contains(token, ignoreCase = true)
-            }
-            if (idx == -1) -1 else autoQualityGroups.size - idx
-        }
-            .thenBy { dateFormat.tryParse(it.date) }
-            .thenBy { it.volume.toInt() },
+        compareBy(
+            { chapter ->
+                val rank = RELIABLE_GROUPS.indexOfFirst { it in chapter.sourceNames }
+                if (rank == -1) -1 else RELIABLE_GROUPS.size - rank
+            },
+            { it.uploadedAt },
+            { it.volumeNumber },
+        ),
     )
 
-    // Translation groups whose releases are generally the cleanest/clearest.
-    // Earlier in the list = higher quality. Auto mode prefers these over anything else
-    // (the site name appears in group.id, e.g. "mangadistrict").
-    private val autoQualityGroups = listOf(
-        "mangadistrict",
-        "manga district",
-        "mangadot",
-        "manga dot",
-        "meganium",
-        "swampert",
-        "pinsir",
-        "lugia",
-        "dodrio",
-        "atsu",
-        "mangahub",
-        "manga hub",
-        "komikindo",
-    )
+    private suspend fun titleIdFor(url: String): String {
+        titleIds[url]?.let { return it }
+        directTitleId(url)?.let {
+            titleIds[url] = it
+            return it
+        }
 
-    private fun buildChapter(chapter: ChapterContainer, translation: Chapter): SChapter = SChapter.create().apply {
-        url = translation.id
-        name = buildString {
-            val volume = translation.volume.toString().removeSuffix(".0")
-            if (translation.volume > 0) {
-                append("Vol. ")
-                append(volume)
-                append(" ")
-            }
-            val number = chapter.number.toString().removeSuffix(".0")
-            if (translation.name.contains(number)) {
-                append(translation.name.trim())
-            } else {
-                append("Ch. ")
-                append(number)
-                append(" ")
-                append(translation.name.trim())
-            }
-        }
-        chapter_number = chapter.number
-        date_upload = dateFormat.tryParse(translation.date)
-        scanlator = buildString {
-            append(translation.group.name)
-            if (groupIdRegex.matchEntire(translation.group.id) == null) {
-                append(" (")
-                append(translation.group.id)
-                append(")")
-            }
-        }
+        val id = client.get("$API_URL/title/detail/$url").parseAs<TitleDetailResponse>().data.id
+        titleIds[url] = id
+        return id
     }
 
-    private val groupIdRegex = Regex("""[a-z0-9]{24}""")
-
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT)
-
-    override fun pageListRequest(chapter: SChapter): Request = GET(getChapterUrl(chapter), headers)
-
-    override fun getChapterUrl(chapter: SChapter): String = "$baseUrl/chapter-detail/${chapter.url}/"
-
-    override fun pageListParse(response: Response): List<Page> {
-        val document = response.asJsoup()
-        updateCSRF(document)
-
-        document.select("script:containsData(titleId)").joinToString(";") { it.data() }.also {
-            val titleId = titleIdRegex.find(it)
-                ?.groupValues?.get(1)
-                ?: return@also
-            val chapterId = chapterIdRegex.find(it)
-                ?.groupValues?.get(1)
-                ?: return@also
-
-            updateViews(titleId, chapterId)
-        }
-
-        val script = document.select("script:containsData(chapterImages)").joinToString(";") { it.data() }
-        val images = imagesRegex.find(script)
-            ?.groupValues?.get(1)
-            ?.parseAs<List<String>>()
-            .orEmpty()
-
-        return images.mapIndexed { idx, img ->
-            Page(idx, imageUrl = img)
-        }
+    /** Slugs are only resolved over the network when they do not already carry the id. */
+    private fun directTitleId(url: String): String? = when {
+        MONGO_ID.matches(url) -> url
+        else -> url.substringAfterLast('-').takeIf { MONGO_ID.matches(it) }
     }
 
-    private val imagesRegex = Regex("""const\s+chapterImages\s*=\s*JSON\.parse\(`([^`]+)`\)""")
-    private val titleIdRegex = Regex("""const\s+titleId\s*=\s*`([^`]+)`;""")
-    private val chapterIdRegex = Regex("""const\s+chapterId\s*=\s*`([^`]+)`;""")
+    override suspend fun getPageList(chapter: SChapter): List<Page> {
+        val pages = client.get("$API_URL/chapter-detail?chapter_id=${chapter.url}")
+            .parseAs<ChapterDetailResponse>().data.chapter.pages.orEmpty()
 
-    private fun updateViews(titleId: String, chapterId: String = "") {
-        val body = FormBody.Builder()
-            .add("title_id", titleId)
-            .add("chapter_id", chapterId)
-            .build()
-
-        val request = POST("$baseUrl/api/v1/views/update/", headers, body)
-
-        client.newCall(request)
-            .enqueue(
-                object : Callback {
-                    override fun onResponse(call: Call, response: Response) {
-                        response.closeQuietly()
-                    }
-                    override fun onFailure(call: Call, e: IOException) {
-                        Log.e(name, "Failed to update views", e)
-                    }
-                },
-            )
+        return pages.mapIndexed { index, imageUrl -> Page(index, imageUrl = imageUrl) }
     }
+
+    override fun getChapterUrl(chapter: SChapter) = "$baseUrl/chapter-detail/${chapter.url}"
+
+    /** Chapters are published in many languages, so only the source's own ones are listed. */
+    private val siteLang: List<String>
+        get() = when (lang) {
+            "es" -> listOf("es", "es-es", "es-la")
+            "pt-BR" -> listOf("pt-br", "pt")
+            "ko" -> listOf("ko", "kr")
+            "zh" -> listOf("zh", "cn", "zh-cn", "zh-hk", "zh-tw")
+            else -> listOf(lang)
+        }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         SwitchPreferenceCompat(screen.context).apply {
             key = NSFW_PREF
-            title = "Hide NSFW content"
-            summary = "Restart of the app required"
+            title = "Hide NSFW titles"
+            summary = "Leaves adult titles out of browse and search results."
             setDefaultValue(false)
         }.also(screen::addPreference)
 
-        // Chapter source filter:
-        //   Auto (Best Quality) – pick highest quality per chapter (no duplicates)
-        //   All Sources          – show every translation (duplicates visible)
-        //   <Source Name>        – only show chapters from that translation group
-        val groupEntries = listOf(
-            "Auto (Best Quality)" to "auto",
-            "All Sources" to "all",
-            "MangaDistrict" to "mangadistrict",
-            "Meganium" to "Meganium",
-            "Swampert" to "Swampert",
-            "Pinsir" to "Pinsir",
-            "Lugia" to "Lugia",
-            "Dodrio" to "Dodrio",
-            "atsu" to "atsu",
-            "mangahub" to "mangahub",
-            "komikindo" to "komikindo",
-            "mangadot" to "mangadot",
-        )
         ListPreference(screen.context).apply {
-            key = TRANSLATION_GROUP_PREF
-            title = "Translation source"
-            entries = groupEntries.map { it.first }.toTypedArray()
-            entryValues = groupEntries.map { it.second }.toTypedArray()
-            setDefaultValue("auto")
-            summary = "Pick a translation group (Auto = best quality, All = show duplicates). Current: %s"
+            key = CHAPTER_SOURCE_PREF
+            title = "Chapter source"
+            entries = CHAPTER_SOURCE_ENTRIES.map { it.first }.toTypedArray()
+            entryValues = CHAPTER_SOURCE_ENTRIES.map { it.second }.toTypedArray()
+            setDefaultValue(PREF_AUTO)
+            summary = "Most titles have several translations. Current: %s"
         }.also(screen::addPreference)
     }
-
-    private fun hideNsfwPreference() = preferences.getBoolean(NSFW_PREF, false)
-
-    override fun imageUrlParse(response: Response): String = throw UnsupportedOperationException()
 }
 
-private const val NSFW_PREF = "nsfw_pref"
-private const val PREF_LANG = "preferred_language"
-private const val TRANSLATION_GROUP_PREF = "preferred_translation_group"
+/**
+ * The API answers 400 "Missing title_id" for any content type other than a bare
+ * `application/json`, but OkHttp's string body helpers append a `charset=utf-8` parameter to
+ * the media type on Android, so the body is written by hand here.
+ */
+private class JsonBody(private val json: String) : RequestBody() {
+    override fun contentType(): MediaType = JSON_MEDIA_TYPE
+
+    override fun contentLength(): Long = json.toByteArray().size.toLong()
+
+    override fun writeTo(sink: BufferedSink) {
+        sink.writeUtf8(json)
+    }
+}
+
+private val JSON_MEDIA_TYPE: MediaType = "application/json".toMediaType()
+
+private const val API_URL = "https://api.mangaball.com/api/v1"
+private const val PAGE_SIZE = 24
+private const val NSFW_PREF = "pref_hide_nsfw"
+private const val CHAPTER_SOURCE_PREF = "pref_chapter_source"
+private const val PREF_AUTO = "auto"
+private const val PREF_ALL = "all"
+
+private val MONGO_ID = Regex("[0-9a-f]{24}")
+
+/** Groups that keep their pages online long term, best first. */
+private val RELIABLE_GROUPS = listOf(
+    "mangadistrict",
+    "mangadot",
+    "mangadex",
+    "comick",
+    "atsu",
+    "mangahub",
+)
+
+/** Groups seen in the chapter listings, used for the "Chapter source" preference. */
+private val GROUPS = listOf(
+    "atsu",
+    "bato",
+    "comick",
+    "comix",
+    "daomeoden",
+    "flowermanga",
+    "godamh",
+    "harimanga",
+    "hiperdex",
+    "kingofshojo",
+    "kiryuu",
+    "komikcast",
+    "komikindo",
+    "komiku",
+    "leercapitulo",
+    "lelscanfr",
+    "likemanga",
+    "manga18",
+    "mangabuddy",
+    "mangadistrict",
+    "mangadex",
+    "mangadot",
+    "mangahub",
+    "mangakatana",
+    "mangalivre",
+    "mangaonline",
+    "manhwaread",
+    "manhwaclub",
+    "manhwaden",
+    "oremanga",
+    "rawdex",
+    "scanita",
+    "tiamanhwa",
+    "zinmanga",
+)
+
+private val CHAPTER_SOURCE_ENTRIES = listOf(
+    "Auto (best translation)" to PREF_AUTO,
+    "All translations" to PREF_ALL,
+) + GROUPS.sorted().map { it to it }

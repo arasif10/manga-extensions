@@ -10,7 +10,7 @@ This repo currently hosts the **Manga Ball** extension.
 
 | Build | Extensions |
 |-------|------------|
-| [![CI](https://github.com/arasif10/manga-extensions/actions/workflows/build_and_publish.yml/badge.svg)](https://github.com/arasif10/manga-extensions/actions/workflows/build_and_publish.yml) | [Manga Ball](https://mangaball.net) |
+| [![CI](https://github.com/arasif10/manga-extensions/actions/workflows/build_and_publish.yml/badge.svg)](https://github.com/arasif10/manga-extensions/actions/workflows/build_and_publish.yml) | [Manga Ball](https://mangaball.com) |
 
 ## Usage
 
@@ -56,7 +56,7 @@ The latest APK is always available in the
 
 | Name | Status |
 |------|--------|
-| [Manga Ball](https://mangaball.net) | Working |
+| [Manga Ball](https://mangaball.com) | Working |
 
 ## Building
 

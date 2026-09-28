@@ -23,6 +23,11 @@ import sys
 from pathlib import Path
 
 APK_RE = re.compile(r"^tachiyomi-(\w+)\.([\w.-]+)-v(\d+\.\d+\.\d+)\.apk$")
+NAME_RE = re.compile(r'^\s*name\s*=\s*"([^"]+)"', re.MULTILINE)
+BASE_URL_RE = re.compile(r'^\s*baseUrl\s*=\s*"([^"]+)"', re.MULTILINE)
+
+# Source tree of this repository (script lives in <root>/.github/scripts/).
+SRC_ROOT = Path(__file__).resolve().parents[2]
 
 # GitHub repository that hosts the published extensions.
 REPO_OWNER = "arasif10"
@@ -33,6 +38,23 @@ RAW_BASE = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{REPO_BR
 # SHA-256 certificate digest of the signing keystore (arasif-release.jks, alias "arasif").
 # Must match the key used by CI to sign the release APKs so apps auto-trust the extension.
 SIGNING_KEY_FINGERPRINT = "bb3e15a4c4d43da5bde85a3d6d24bb519b7414b5d9039c0a5fbc60baf489186f"
+
+
+def read_extension_metadata(lang: str, ext_name: str):
+    """Read the name / baseUrl declared in the extension's own build.gradle.kts.
+
+    The APK filename token is the *module* name ("mangaball"), which is not the display
+    name: TitleCasing it published the extension as "Mangaball" while the APK itself is
+    labelled "Manga Ball". The declared values are the ones the app shows.
+    """
+    build_file = SRC_ROOT / "src" / lang / ext_name / "build.gradle.kts"
+    if not build_file.exists():
+        print(f"  !! {build_file} not found - falling back to the APK filename")
+        return "", None
+    block = build_file.read_text(encoding="utf-8").split("keiyoushi {", 1)[-1]
+    name_match = NAME_RE.search(block)
+    url_match = BASE_URL_RE.search(block)
+    return (name_match.group(1) if name_match else ""), (url_match.group(1) if url_match else None)
 
 
 def find_apks(apk_dir: Path):
@@ -58,9 +80,12 @@ def find_apks(apk_dir: Path):
                 version = meta.get("elements", [{}])[0].get("versionName", version)
             except Exception:
                 pass
+        declared_name, base_url = read_extension_metadata(lang, ext_name)
         apks[pkg] = {
             "lang": lang,
             "name": ext_name,
+            "display_name": declared_name or ext_name.replace("-", " ").title(),
+            "base_url": base_url or "",
             "version": version,
             "code": code,
             "file": apk,
@@ -104,8 +129,7 @@ def write_komikku_store(repo: Path, apks: dict):
     extensions = []
     for pkg, info in apks.items():
         apk_name = f"tachiyomi-{info['lang']}.{info['name']}-v{info['version']}.apk"
-        ext_display_name = info["name"].replace("-", " ").title()
-        base_url = "https://mangaball.net" if "mangaball" in pkg else ""
+        ext_display_name = info["display_name"]
         lib_version = info["version"].rsplit(".", 1)[0]
         extensions.append(
             {
@@ -122,9 +146,9 @@ def write_komikku_store(repo: Path, apks: dict):
                 "sources": [
                     {
                         "id": compute_source_id(pkg),
-                        "name": "Mangaball",
+                        "name": ext_display_name,
                         "language": "all",
-                        "homeUrl": base_url,
+                        "homeUrl": info["base_url"],
                     },
                 ],
             },
@@ -164,7 +188,8 @@ def main():
 
     print(f"Found {len(apks)} extension(s):")
     for pkg, info in apks.items():
-        print(f"  {pkg} v{info['version']} (code {info['code']})")
+        print(f"  {pkg} v{info['version']} (code {info['code']}) as '{info['display_name']}'")
+        print(f"     baseUrl: {info['base_url'] or '(none)'}")
 
     index_pretty = load_json(repo / "index.json")
     index_min = load_json(repo / "index.min.json")
@@ -177,14 +202,14 @@ def main():
         entry_pretty = by_pkg_pretty.get(pkg)
         entry_min = by_pkg_min.get(pkg)
 
-        ext_display_name = info["name"].replace("-", " ").title()
+        ext_display_name = info["display_name"]
         source_id = compute_source_id(pkg)
         sources = [
             {
                 "name": ext_display_name,
                 "lang": info["lang"],
                 "id": str(source_id),
-                "baseUrl": "https://mangaball.net" if "mangaball" in pkg else "",
+                "baseUrl": info["base_url"],
             },
         ]
 
@@ -208,6 +233,10 @@ def main():
             changed = True
         else:
             # Update existing
+            if entry_pretty.get("name") != ext_display_name:
+                entry_pretty["name"] = ext_display_name
+                entry_min["name"] = ext_display_name
+                changed = True
             if entry_pretty.get("sources") != sources:
                 entry_pretty["sources"] = sources
                 entry_min["sources"] = sources
