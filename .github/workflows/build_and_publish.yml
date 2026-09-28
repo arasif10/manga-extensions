@@ -51,7 +51,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: manga-extension-apks
-          path: '**/build/outputs/apk/**/*.apk'
+          # output-metadata.json carries the APK's real versionCode, which the publish script
+          # needs - deriving it from the version name alone does not match the APK.
+          path: |
+            '**/build/outputs/apk/**/*.apk'
+            '**/build/outputs/apk/**/output-metadata.json'
           retention-days: 7
 
       - name: Clean up signing key
