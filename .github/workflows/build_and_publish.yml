@@ -54,8 +54,9 @@ jobs:
           # output-metadata.json carries the APK's real versionCode, which the publish script
           # needs - deriving it from the version name alone does not match the APK.
           path: |
-            '**/build/outputs/apk/**/*.apk'
-            '**/build/outputs/apk/**/output-metadata.json'
+            **/build/outputs/apk/**/*.apk
+            **/build/outputs/apk/**/output-metadata.json
+          if-no-files-found: error
           retention-days: 7
 
       - name: Clean up signing key
