@@ -16,7 +16,7 @@
           "iconUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/icon/eu.kanade.tachiyomi.extension.all.mangaball.png"
         },
         "extensionLib": "1.6",
-        "versionCode": 10601,
+        "versionCode": 1,
         "versionName": "1.6.1",
         "contentWarning": "CONTENT_WARNING_MIXED",
         "sources": [
