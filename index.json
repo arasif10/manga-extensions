@@ -1,18 +1,18 @@
 [
   {
-    "name": "Mangaball",
+    "name": "Manga Ball",
     "pkg": "eu.kanade.tachiyomi.extension.all.mangaball",
-    "apk": "tachiyomi-all.mangaball-v1.4.8.apk",
+    "apk": "tachiyomi-all.mangaball-v1.6.1.apk",
     "lang": "all",
-    "code": 10408,
-    "version": "1.4.8",
+    "code": 10601,
+    "version": "1.6.1",
     "nsfw": 0,
     "sources": [
       {
-        "name": "Mangaball",
+        "name": "Manga Ball",
         "lang": "all",
         "id": "177929529580796750",
-        "baseUrl": "https://mangaball.net"
+        "baseUrl": "https://mangaball.com"
       }
     ]
   }

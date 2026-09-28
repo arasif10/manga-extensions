@@ -9,22 +9,22 @@
   "extensionList": {
     "extensions": [
       {
-        "name": "Mangaball",
+        "name": "Manga Ball",
         "packageName": "eu.kanade.tachiyomi.extension.all.mangaball",
         "resources": {
-          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-all.mangaball-v1.4.8.apk",
+          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-all.mangaball-v1.6.1.apk",
           "iconUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/icon/eu.kanade.tachiyomi.extension.all.mangaball.png"
         },
-        "extensionLib": "1.4",
-        "versionCode": 10408,
-        "versionName": "1.4.8",
+        "extensionLib": "1.6",
+        "versionCode": 10601,
+        "versionName": "1.6.1",
         "contentWarning": "CONTENT_WARNING_MIXED",
         "sources": [
           {
             "id": 177929529580796750,
-            "name": "Mangaball",
+            "name": "Manga Ball",
             "language": "all",
-            "homeUrl": "https://mangaball.net"
+            "homeUrl": "https://mangaball.com"
           }
         ]
       }
