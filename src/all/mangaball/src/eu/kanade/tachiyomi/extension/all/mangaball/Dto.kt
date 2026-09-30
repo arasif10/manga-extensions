@@ -25,6 +25,9 @@ class SearchResponse(
     private val data: List<Title> = emptyList(),
     private val pagination: Pagination? = null,
 ) {
+    /** Only used to sample which sites currently publish chapters. */
+    val titleIds: List<String> get() = data.map { it.id }
+
     @Serializable
     class Pagination(
         private val page: Int = 1,
@@ -34,6 +37,17 @@ class SearchResponse(
     }
 
     fun toMangasPage() = MangasPage(data.map(Title::toSManga), pagination?.hasNextPage ?: false)
+
+    /**
+     * The API cannot exclude by origin or demographic, so titles carrying one of the excluded
+     * values are dropped here; a title with none of these fields set survives every exclusion.
+     */
+    fun dropping(excludedLanguages: List<String>, excludedDemographics: List<String>): SearchResponse = SearchResponse(
+        data.filter { title ->
+            title.originalLanguageCode !in excludedLanguages && title.demographic !in excludedDemographics
+        },
+        pagination,
+    )
 }
 
 @Serializable
@@ -42,7 +56,13 @@ class Title(
     val slug: String,
     private val name: String,
     private val image: Image? = null,
+    /** A language code (`ja`, `ko`, `zh`, `en`), so an excluded origin can be matched. */
+    @SerialName("originalLanguage") private val originalLanguage: String? = null,
+    @SerialName("publicationDemographic") private val publicationDemographic: String? = null,
 ) {
+    internal val originalLanguageCode: String? get() = originalLanguage
+
+    internal val demographic: String? get() = publicationDemographic
     fun toSManga() = SManga.create().apply {
         url = slug
         title = name
@@ -165,6 +185,12 @@ class Chapter(
     /** Scanlator groups are named inconsistently across fields, so both are considered. */
     val sourceNames: List<String> get() = listOfNotNull(site, groupName).map { it.lowercase() }
 
+    /** The publishing site. Some chapters carry the owning group's id here instead of a slug. */
+    val siteSlug: String? get() = site?.trim()?.lowercase()?.takeIf(String::isNotEmpty)
+
+    /** The uploader shown on the chapter row, and what the scanlator blacklist matches on. */
+    val scanlator: String? get() = groupName ?: site
+
     val chapterNumber: Float? get() = number
 
     val volumeNumber: Float get() = volume ?: 0f
@@ -178,7 +204,7 @@ class Chapter(
         val label = name.orEmpty()
         val number = number
         val uploaded = uploadedAt
-        val group = groupName ?: site.orEmpty()
+        val group = scanlator.orEmpty()
         val volume = volumeNumber
         val numberText = number?.toDisplay()
 

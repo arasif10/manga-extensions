@@ -1,9 +1,11 @@
 package eu.kanade.tachiyomi.extension.all.mangaball
 
-import androidx.preference.ListPreference
+import android.util.Log
+import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -18,6 +20,11 @@ import keiyoushi.utils.firstInstance
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.toJsonString
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -26,11 +33,18 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
 import okio.BufferedSink
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The public site is a Next.js frontend; everything here actually talks to the JSON API on
  * api.mangaball.com, which is addressed by title slug for browsing and by Mongo title id for
  * chapter listings.
+ *
+ * A chapter is usually published by several external sites at once, so one of them is kept and the
+ * others are hidden; the priority order setting decides which (see [sourceRanking]). That merging
+ * can be turned off, and the sites the site serves are topped up in the background (see
+ * [syncChapterSources]).
  */
 @Source
 abstract class MangaBall :
@@ -58,12 +72,13 @@ abstract class MangaBall :
         SortOrderFilter(),
         TagModeFilter(),
         DemographicFilter(),
-        StatusFilter(),
         OriginFilter(),
+        StatusFilter(),
         ContentFilter(),
         FormatFilter(),
         GenreFilter(),
         ThemeFilter(),
+        AdvancedFilterGroup(),
     )
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
@@ -77,25 +92,42 @@ abstract class MangaBall :
             .addQueryParameter("sort_order", filters.firstInstance<SortOrderFilter>().selected)
             .addQueryParameter("tag_mode", filters.firstInstance<TagModeFilter>().selected)
 
-        filters.firstInstance<StatusFilter>().selected
-            .takeIf { it.isNotEmpty() }
+        filters.firstInstance<StatusFilter>().selected.takeIf { it.isNotEmpty() }
             ?.let { url.addQueryParameter("status", it) }
-        filters.firstInstance<OriginFilter>().selected
-            .takeIf { it.isNotEmpty() }
-            ?.let { url.addQueryParameter("original_language", it) }
-        filters.firstInstance<DemographicFilter>().selected
-            .takeIf { it.isNotEmpty() }
-            ?.let { url.addQueryParameter("demographic", it) }
+
+        // Ticked origins and demographics are sent to the API as one comma separated list. The
+        // API cannot exclude them, so ticked-off ones are dropped from the answer afterwards.
+        val origin = filters.firstInstance<OriginFilter>()
+        val demographic = filters.firstInstance<DemographicFilter>()
+        origin.included.takeIf { it.isNotEmpty() }
+            ?.let { url.addQueryParameter("original_language", it.joinToString(",")) }
+        demographic.included.takeIf { it.isNotEmpty() }
+            ?.let { url.addQueryParameter("demographic", it.joinToString(",")) }
 
         val tagGroups = filters.filterIsInstance<TagGroupFilter>()
-        tagGroups.flatMap { it.included }
+        val writtenTags = filters.findWritten<TagChoiceFilter>()
+            ?.let { resolveTagQuery(it.state, tagGroups.flatMap(TagGroupFilter::tagOptions)) }
+        // Themes get their own box, looked up only in the Theme group, so a name that exists both
+        // as a genre and a theme (Comics) resolves to the theme tag alone.
+        val writtenThemes = filters.findWritten<ThemeChoiceFilter>()
+            ?.let { resolveTagQuery(it.state, filters.firstInstance<ThemeFilter>().tagOptions) }
+
+        (tagGroups.flatMap { it.included } + writtenTags?.included.orEmpty() + writtenThemes?.included.orEmpty())
+            .distinct()
             .takeIf { it.isNotEmpty() }
             ?.let { url.addQueryParameter("included_tags", it.joinToString(",")) }
-        tagGroups.flatMap { it.excluded }
+        (tagGroups.flatMap { it.excluded } + writtenTags?.excluded.orEmpty() + writtenThemes?.excluded.orEmpty())
+            .distinct()
             .takeIf { it.isNotEmpty() }
             ?.let { url.addQueryParameter("excluded_tags", it.joinToString(",")) }
 
-        return client.get(url.build()).parseAs<SearchResponse>().toMangasPage()
+        val answered = client.get(url.build()).parseAs<SearchResponse>()
+
+        return if (origin.excluded.isEmpty() && demographic.excluded.isEmpty()) {
+            answered.toMangasPage()
+        } else {
+            answered.dropping(origin.excludedLanguageCodes, demographic.excluded).toMangasPage()
+        }
     }
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
@@ -143,36 +175,44 @@ abstract class MangaBall :
 
     private suspend fun loadChapterList(url: String): List<SChapter> {
         val body = JsonBody(ChapterListRequest(titleIdFor(url)).toJsonString())
-        val chapters = client.post("$API_URL/chapter/chapter-listing-by-title-id", body)
+        val listed = client.post("$API_URL/chapter/chapter-listing-by-title-id", body)
             .parseAs<ChapterListResponse>().data
             .filter { it.lang == null || it.lang in siteLang }
 
-        return when (val mode = preferences.getString(CHAPTER_SOURCE_PREF, PREF_AUTO).orEmpty()) {
-            PREF_ALL -> chapters.map(Chapter::toSChapter)
-            PREF_AUTO, "" -> bestTranslationPerNumber(chapters)
-            else -> chapters.filter { mode in it.sourceNames }
-                .map(Chapter::toSChapter)
-                // Never open with an empty chapter list when the chosen group has not picked
-                // this title up: fall back to the best available translation.
-                .ifEmpty { bestTranslationPerNumber(chapters) }
-        }
+        // Remembered before anything is hidden, so a blacklisted group can be restored later.
+        preferences.rememberScanlators(listed.mapNotNull { it.scanlator })
+        val chapters = listed.filterBlacklistedScanlators(preferences.scanlatorBlacklist())
+
+        // With merging turned off every site's version of a chapter is listed as it arrives.
+        return if (mergeEnabled()) bestTranslationPerNumber(chapters) else chapters.map(Chapter::toSChapter)
     }
 
-    private fun bestTranslationPerNumber(chapters: List<Chapter>): List<SChapter> = chapters
-        .groupBy { it.chapterNumber }
-        .mapNotNull { (_, translations) -> pickBestTranslation(translations)?.toSChapter() }
+    /**
+     * One row per chapter number: where several sites published the same number, only the highest
+     * ranked of them survives. A number that a single site has is kept as it is, so a site that is
+     * ahead of the ranked ones still shows the newest chapters nobody else has released yet.
+     */
+    private fun bestTranslationPerNumber(chapters: List<Chapter>): List<SChapter> {
+        val ranking = sourceRanking()
+
+        return chapters.groupBy { it.chapterNumber }
+            .mapNotNull { (_, translations) -> pickBestTranslation(translations, ranking)?.toSChapter() }
+    }
 
     /** The API exposes no page counts, so a known-good group wins over the newest upload. */
-    private fun pickBestTranslation(translations: List<Chapter>): Chapter? = translations.maxWithOrNull(
+    private fun pickBestTranslation(translations: List<Chapter>, ranking: List<String>): Chapter? = translations.maxWithOrNull(
         compareBy(
             { chapter ->
-                val rank = RELIABLE_GROUPS.indexOfFirst { it in chapter.sourceNames }
-                if (rank == -1) -1 else RELIABLE_GROUPS.size - rank
+                val rank = ranking.indexOfFirst { it in chapter.sourceNames }
+                if (rank == -1) -1 else ranking.size - rank
             },
             { it.uploadedAt },
             { it.volumeNumber },
         ),
     )
+
+    /** The sources the user ranked first, followed by the built-in order of reliable groups. */
+    private fun sourceRanking(): List<String> = (currentSourceOrder() + RELIABLE_GROUPS).distinct()
 
     private suspend fun titleIdFor(url: String): String {
         titleIds[url]?.let { return it }
@@ -219,14 +259,154 @@ abstract class MangaBall :
             setDefaultValue(false)
         }.also(screen::addPreference)
 
-        ListPreference(screen.context).apply {
-            key = CHAPTER_SOURCE_PREF
-            title = "Chapter source"
-            entries = CHAPTER_SOURCE_ENTRIES.map { it.first }.toTypedArray()
-            entryValues = CHAPTER_SOURCE_ENTRIES.map { it.second }.toTypedArray()
-            setDefaultValue(PREF_AUTO)
-            summary = "Most titles have several translations. Current: %s"
+        screen.addScanlatorBlacklistPreference(preferences)
+
+        // A source screen only accepts plain preference rows, so there is no way to drag sources
+        // into order; the ranking is typed instead, first name winning. It is added to the screen
+        // after the switch that decides whether it is used at all.
+        val orderPreference = EditTextPreference(screen.context).apply {
+            key = SOURCE_ORDER_PREF
+            title = "Priority order"
+            dialogTitle = "Priority order"
+            dialogMessage = "Comma separated, first is read first, for example mangadex, comick, " +
+                "bato. When several sites published the same chapter the first of them is kept and " +
+                "the rest are hidden, but a chapter only one site has is always listed."
+            setDefaultValue("")
+        }
+
+        orderPreference.setOnPreferenceChangeListener { preference, value ->
+            // The typed text is rewritten as a cleaned up list, so the framework must not also
+            // store the raw string.
+            val order = parseSourceOrder(value as? String)
+            preferences.edit().putString(SOURCE_ORDER_PREF, order.joinToString(", ")).apply()
+            (preference as EditTextPreference).summary = sourceOrderSummary(order)
+            false
+        }
+
+        SwitchPreferenceCompat(screen.context).apply {
+            key = MERGE_PREF
+            title = "Merge duplicate chapters"
+            summary = "Keeps one version of each chapter number, the priority order deciding " +
+                "which; turned off, every site's versions are listed."
+            setDefaultValue(true)
+            isChecked = mergeEnabled()
+            setOnPreferenceChangeListener { _, value ->
+                applyMergeSetting(orderPreference, value as? Boolean ?: true)
+                true
+            }
         }.also(screen::addPreference)
+
+        screen.addPreference(orderPreference)
+        applyMergeSetting(orderPreference, mergeEnabled())
+
+        // Everything the sync discovers shows up the next time this screen is opened.
+        syncChapterSources()
+    }
+
+    private fun mergeEnabled(): Boolean = preferences.getBoolean(MERGE_PREF, true)
+
+    /** The typed ranking only decides anything while duplicates are being merged. */
+    private fun applyMergeSetting(orderPreference: EditTextPreference, merge: Boolean) {
+        orderPreference.setEnabled(merge)
+        orderPreference.summary = if (merge) {
+            sourceOrderSummary(currentSourceOrder())
+        } else {
+            "Turn on merging duplicate chapters to rank sources."
+        }
+    }
+
+    /** The typed order, e.g. "mangadex, comick bato" as the user wrote it. */
+    private fun currentSourceOrder(): List<String> = parseSourceOrder(preferences.getString(SOURCE_ORDER_PREF, null))
+
+    private fun parseSourceOrder(raw: String?): List<String> = raw.orEmpty()
+        .split(',', ';', ' ', '\n')
+        .map { it.trim().lowercase() }
+        .filter(::isSiteSlug)
+        .distinct()
+
+    private fun sourceOrderSummary(order: List<String>): String {
+        if (order.isEmpty()) return "Not set, so the built-in order decides. Tap to rank sources."
+
+        // A name the site has never served is usually a typo, and silently ranking it would look
+        // like the setting did nothing. Chapters are also ranked by uploader name, so the names
+        // seen while browsing count as known as well.
+        val known = chapterSources() + preferences.knownScanlatorNames().map { it.trim().lowercase() }
+        val unknown = order.filterNot { it in known }
+        val text = order.joinToString(" > ")
+        return if (unknown.isEmpty()) text else "$text (unknown: ${unknown.joinToString(", ")})"
+    }
+
+    /** Bundled sources plus everything the last sync discovered. */
+    private fun chapterSources(): List<String> {
+        val synced = preferences.getStringSet(SYNCED_SOURCES_PREF, emptySet()).orEmpty()
+
+        return (BUNDLED_SOURCES + synced)
+            .map { it.trim().lowercase() }
+            .filter(::isSiteSlug)
+            .distinct()
+            .sorted()
+    }
+
+    /**
+     * The site picks up and drops chapter sources over time, so the known list is topped up instead
+     * of staying frozen at the sources that existed when the extension was built. Throttled, and
+     * errors are not fatal: the bundled list always works on its own.
+     */
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun syncChapterSources() {
+        val syncedAt = preferences.getLong(SOURCES_SYNCED_AT_PREF, 0L)
+        if (System.currentTimeMillis() - syncedAt < SOURCE_SYNC_INTERVAL.inWholeMilliseconds) return
+
+        GlobalScope.launch(Dispatchers.IO) {
+            val discovered = runCatching { discoverChapterSources() }.getOrElse {
+                Log.e(name, "Chapter source sync failed", it)
+                return@launch
+            }
+            if (discovered.isEmpty()) return@launch
+
+            // Kept alongside what is already known rather than replacing it: a source that none of
+            // the sampled titles happens to use this time must not disappear from the list. The
+            // stored set is re-filtered so entries an older build wrongly added are dropped too.
+            val known = preferences.getStringSet(SYNCED_SOURCES_PREF, emptySet()).orEmpty()
+                .map { it.trim().lowercase() }
+                .filter(::isSiteSlug)
+                .toSet()
+            preferences.edit()
+                .putStringSet(SYNCED_SOURCES_PREF, known + discovered)
+                .putLong(SOURCES_SYNCED_AT_PREF, System.currentTimeMillis())
+                .apply()
+        }
+    }
+
+    /**
+     * Site slugs are not listed anywhere - only the chapters themselves carry them - so a few
+     * popular and a few freshly updated titles are sampled and every site they mention is
+     * collected. Bounded by a time budget because one long-running title can answer with
+     * thousands of chapters; a failed or cut-off sample just yields a shorter list.
+     */
+    private suspend fun discoverChapterSources(): Set<String> {
+        val found = mutableSetOf<String>()
+        val titleIds = SOURCE_SAMPLE_SORTS.flatMap { sort ->
+            runCatching {
+                client.get(
+                    "$API_URL/title/search-advanced?page=1&limit=$SOURCE_SAMPLE_TITLES&keyword=&adult_mode=all" +
+                        "&use_user_settings=false&sort_by=$sort&sort_order=desc",
+                ).parseAs<SearchResponse>().titleIds
+            }.getOrDefault(emptyList())
+        }.distinct()
+
+        withTimeoutOrNull(SOURCE_SYNC_BUDGET) {
+            for (titleId in titleIds) {
+                runCatching {
+                    client.post(
+                        "$API_URL/chapter/chapter-listing-by-title-id",
+                        JsonBody(ChapterListRequest(titleId).toJsonString()),
+                    ).parseAs<ChapterListResponse>().data.mapNotNullTo(found) { it.siteSlug }
+                }
+            }
+        }
+
+        return found.map { it.trim().lowercase() }.filter(::isSiteSlug).toSet()
     }
 }
 
@@ -250,11 +430,30 @@ private val JSON_MEDIA_TYPE: MediaType = "application/json".toMediaType()
 private const val API_URL = "https://api.mangaball.com/api/v1"
 private const val PAGE_SIZE = 24
 private const val NSFW_PREF = "pref_hide_nsfw"
-private const val CHAPTER_SOURCE_PREF = "pref_chapter_source"
-private const val PREF_AUTO = "auto"
-private const val PREF_ALL = "all"
+private const val MERGE_PREF = "pref_merge_duplicate_chapters"
+private const val SYNCED_SOURCES_PREF = "pref_synced_chapter_sources"
+private const val SOURCES_SYNCED_AT_PREF = "pref_chapter_sources_synced_at"
+private const val SOURCE_ORDER_PREF = "pref_source_priority_order"
+private val SOURCE_SAMPLE_SORTS = listOf("views", "lastupdate")
+private const val SOURCE_SAMPLE_TITLES = 3
+private val SOURCE_SYNC_BUDGET = 30.seconds
+private val SOURCE_SYNC_INTERVAL = 7.days
 
-private val MONGO_ID = Regex("[0-9a-f]{24}")
+/**
+ * The write-in boxes sit inside the Advanced group rather than in the filter list itself, so the
+ * groups are searched as well.
+ */
+private inline fun <reified T : Filter<*>> FilterList.findWritten(): T? = filterIsInstance<T>().firstOrNull()
+    ?: filterIsInstance<Filter.Group<*>>().flatMap { it.state.filterIsInstance<T>() }.firstOrNull()
+
+private val MONGO_ID = Regex("^[0-9a-f]{24}$")
+private val SITE_SLUG = Regex("^[a-z0-9][a-z0-9._-]{1,31}$")
+
+/**
+ * Site slugs are what the chapter listings carry, but group entries expose 24-hex Mongo ids that
+ * fit [SITE_SLUG] just as well, so those ids are rejected here.
+ */
+private fun isSiteSlug(value: String): Boolean = value.isNotEmpty() && SITE_SLUG.matches(value) && !MONGO_ID.matches(value)
 
 /** Groups that keep their pages online long term, best first. */
 private val RELIABLE_GROUPS = listOf(
@@ -266,8 +465,11 @@ private val RELIABLE_GROUPS = listOf(
     "mangahub",
 )
 
-/** Groups seen in the chapter listings, used for the "Chapter source" preference. */
-private val GROUPS = listOf(
+/**
+ * Chapter sources known to publish on the site when this build was made; the sync tops these up
+ * with whatever it finds later.
+ */
+private val BUNDLED_SOURCES = listOf(
     "atsu",
     "bato",
     "comick",
@@ -283,9 +485,11 @@ private val GROUPS = listOf(
     "komikindo",
     "komiku",
     "leercapitulo",
+    "lelmanga",
     "lelscanfr",
     "likemanga",
     "manga18",
+    "mangabr",
     "mangabuddy",
     "mangadistrict",
     "mangadex",
@@ -294,17 +498,14 @@ private val GROUPS = listOf(
     "mangakatana",
     "mangalivre",
     "mangaonline",
-    "manhwaread",
     "manhwaclub",
     "manhwaden",
+    "manhwaread",
+    "mugiwaras",
     "oremanga",
     "rawdex",
     "scanita",
     "tiamanhwa",
+    "xbat",
     "zinmanga",
 )
-
-private val CHAPTER_SOURCE_ENTRIES = listOf(
-    "Auto (best translation)" to PREF_AUTO,
-    "All translations" to PREF_ALL,
-) + GROUPS.sorted().map { it to it }

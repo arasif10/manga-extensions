@@ -14,6 +14,7 @@ abstract class SelectFilter(
     val selected: String get() = options[state].second
 }
 
+/** One tickable option of a tag or tri-state group: ticked to include, twice to exclude. */
 class TriStateFilter(name: String, val value: String) : Filter.TriState(name)
 
 /** Tags are sent as ids with an AND/OR match mode; excluded tags are sent separately. */
@@ -23,6 +24,9 @@ abstract class TagGroupFilter(
 ) : Filter.Group<TriStateFilter>(name, options.map { TriStateFilter(it.first, it.second) }) {
     val included: List<String> get() = state.filter { it.isIncluded() }.map { it.value }
     val excluded: List<String> get() = state.filter { it.isExcluded() }.map { it.value }
+
+    /** Every tag this group holds, so a written name can be resolved to the id the API wants. */
+    internal val tagOptions: List<TagOption> get() = state.map { TagOption(it.name, it.value) }
 }
 
 class SortFilter(defaultIndex: Int = LATEST_UPDATE) : SelectFilter("Sort By", SORTS, defaultIndex) {
@@ -57,17 +61,24 @@ class TagModeFilter :
         ),
     )
 
+/**
+ * Demographics are tri-state like [OriginFilter]: ticked ones are sent together, ticked-off ones
+ * are dropped from the answer, which the API cannot do itself. The answer carries the same values
+ * as are set up here, so no translation is needed.
+ */
 class DemographicFilter :
-    SelectFilter(
+    Filter.Group<TriStateFilter>(
         "Magazine Demographic",
         listOf(
-            "Any" to "",
-            "Shounen" to "shounen",
-            "Shoujo" to "shoujo",
-            "Seinen" to "seinen",
-            "Josei" to "josei",
+            TriStateFilter("Shounen", "shounen"),
+            TriStateFilter("Shoujo", "shoujo"),
+            TriStateFilter("Seinen", "seinen"),
+            TriStateFilter("Josei", "josei"),
         ),
-    )
+    ) {
+    val included: List<String> get() = state.filter { it.isIncluded() }.map { it.value }
+    val excluded: List<String> get() = state.filter { it.isExcluded() }.map { it.value }
+}
 
 class StatusFilter :
     SelectFilter(
@@ -81,17 +92,38 @@ class StatusFilter :
         ),
     )
 
+/**
+ * Origins are tri-state: ticked ones are sent to the API together, and ticked-off ones are dropped
+ * from the answer, which the API cannot do itself.
+ */
 class OriginFilter :
-    SelectFilter(
+    Filter.Group<TriStateFilter>(
         "Origin",
         listOf(
-            "Any" to "",
-            "Manga (Japanese)" to "manga",
-            "Manhwa (Korean)" to "manhwa",
-            "Manhua (Chinese)" to "manhua",
-            "Comics (Western)" to "comics",
+            TriStateFilter("Manga (Japanese)", "manga"),
+            TriStateFilter("Manhwa (Korean)", "manhwa"),
+            TriStateFilter("Manhua (Chinese)", "manhua"),
+            TriStateFilter("Comics (Western)", "comics"),
         ),
-    )
+    ) {
+    val included: List<String> get() = state.filter { it.isIncluded() }.map { it.value }
+    val excluded: List<String> get() = state.filter { it.isExcluded() }.map { it.value }
+
+    /**
+     * The search answer carries the origin as a language code (`ja`, `ko`, `zh`, `en`), so the
+     * excluded origins are translated into those for the client-side drop.
+     */
+    internal val excludedLanguageCodes: List<String> get() = excluded.mapNotNull { LANGUAGE_CODES[it] }
+
+    private companion object {
+        private val LANGUAGE_CODES = mapOf(
+            "manga" to "ja",
+            "manhwa" to "ko",
+            "manhua" to "zh",
+            "comics" to "en",
+        )
+    }
+}
 
 class ContentFilter :
     TagGroupFilter(
