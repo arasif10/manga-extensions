@@ -23,12 +23,9 @@ abstract class NHentai : KeiSource() {
 
     private val apiUrl get() = "$baseUrl/api/v2"
 
-    override suspend fun getPopularManga(page: Int): MangasPage {
-        if (page > 1) return MangasPage(emptyList(), false)
-
-        val popular = client.get("$apiUrl/galleries/popular").parseAs<List<Gallery>>()
-        return MangasPage(popular.filterNot { it.blacklisted }.map { it.toSManga() }, false)
-    }
+    // The site's own popular endpoint answers one page and ignores `page`, so the browses go
+    // through the listing that carries the whole ranking and can be paged, sorted the same way.
+    override suspend fun getPopularManga(page: Int): MangasPage = browse(page, "popular")
 
     override suspend fun getLatestUpdates(page: Int): MangasPage = browse(page, "")
 
