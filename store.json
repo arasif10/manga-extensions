@@ -9,6 +9,46 @@
   "extensionList": {
     "extensions": [
       {
+        "name": "3Hentai",
+        "packageName": "eu.kanade.tachiyomi.extension.all.hentai3",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-all.hentai3-v1.6.1.apk",
+          "iconUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/icon/eu.kanade.tachiyomi.extension.all.hentai3.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": 1,
+        "versionName": "1.6.1",
+        "contentWarning": "CONTENT_WARNING_MIXED",
+        "sources": [
+          {
+            "id": 7547979342625181159,
+            "name": "3Hentai",
+            "language": "all",
+            "homeUrl": "https://3hentai.net"
+          }
+        ]
+      },
+      {
+        "name": "IMHentai",
+        "packageName": "eu.kanade.tachiyomi.extension.all.imhentai",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-all.imhentai-v1.6.1.apk",
+          "iconUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/icon/eu.kanade.tachiyomi.extension.all.imhentai.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": 1,
+        "versionName": "1.6.1",
+        "contentWarning": "CONTENT_WARNING_MIXED",
+        "sources": [
+          {
+            "id": 4773277122847667648,
+            "name": "IMHentai",
+            "language": "all",
+            "homeUrl": "https://imhentai.xxx"
+          }
+        ]
+      },
+      {
         "name": "Manga Ball",
         "packageName": "eu.kanade.tachiyomi.extension.all.mangaball",
         "resources": {
@@ -25,6 +65,66 @@
             "name": "Manga Ball",
             "language": "all",
             "homeUrl": "https://mangaball.com"
+          }
+        ]
+      },
+      {
+        "name": "NHentai",
+        "packageName": "eu.kanade.tachiyomi.extension.all.nhentai",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-all.nhentai-v1.6.1.apk",
+          "iconUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/icon/eu.kanade.tachiyomi.extension.all.nhentai.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": 1,
+        "versionName": "1.6.1",
+        "contentWarning": "CONTENT_WARNING_MIXED",
+        "sources": [
+          {
+            "id": 2391957969258312430,
+            "name": "NHentai",
+            "language": "all",
+            "homeUrl": "https://nhentai.net"
+          }
+        ]
+      },
+      {
+        "name": "Pururin",
+        "packageName": "eu.kanade.tachiyomi.extension.all.pururin",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-all.pururin-v1.6.1.apk",
+          "iconUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/icon/eu.kanade.tachiyomi.extension.all.pururin.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": 1,
+        "versionName": "1.6.1",
+        "contentWarning": "CONTENT_WARNING_MIXED",
+        "sources": [
+          {
+            "id": 4221596932960806845,
+            "name": "Pururin",
+            "language": "all",
+            "homeUrl": "https://pururin.me"
+          }
+        ]
+      },
+      {
+        "name": "MangaDot",
+        "packageName": "eu.kanade.tachiyomi.extension.en.mangadotnet",
+        "resources": {
+          "apkUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/apk/tachiyomi-en.mangadotnet-v1.6.1.apk",
+          "iconUrl": "https://raw.githubusercontent.com/arasif10/manga-extensions/repo/icon/eu.kanade.tachiyomi.extension.en.mangadotnet.png"
+        },
+        "extensionLib": "1.6",
+        "versionCode": 1,
+        "versionName": "1.6.1",
+        "contentWarning": "CONTENT_WARNING_MIXED",
+        "sources": [
+          {
+            "id": 6773326807001370534,
+            "name": "MangaDot",
+            "language": "all",
+            "homeUrl": "https://mangadot.net"
           }
         ]
       }
