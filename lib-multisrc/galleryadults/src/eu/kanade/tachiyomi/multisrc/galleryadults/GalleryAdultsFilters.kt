@@ -2,11 +2,34 @@ package eu.kanade.tachiyomi.multisrc.galleryadults
 
 import eu.kanade.tachiyomi.source.model.Filter
 
-class Genre(name: String, val uri: String) : Filter.CheckBox(name)
+/**
+ * One tag: ticked to search for it, ticked twice to keep it out. The site can only keep a tag out
+ * of the advanced search, so ticking one off takes the search there.
+ */
+class Genre(name: String, val uri: String) : Filter.TriState(name)
+
 class GenresFilter(genres: Map<String, String>) :
-    Filter.Group<Genre>(
+    Filter.Group<GenreGroup>(
         "Tags",
-        genres.map { Genre(it.key, it.value) },
+        genres.toList().sortedBy { it.first }.groupBy {
+            val c = it.second.firstOrNull()?.uppercase()
+            if (c != null && c in "A".."Z") c else "#"
+        }
+            .map { (letter, chunk) -> GenreGroup(letter, chunk) },
+    ) {
+    /** Tags ticked to search for. */
+    val included get() = state.flatMap { it.state.filter { it.isIncluded() } }
+
+    /** Tags ticked off, which only the advanced search can keep out. */
+    val excluded get() = state.flatMap { it.state.filter { it.isExcluded() } }
+}
+
+class GenreGroup(letter: String, val genres: List<Pair<String, String>>) :
+    Filter.Group<Genre>(
+        letter,
+        genres.map {
+            Genre(it.first, it.second)
+        },
     )
 
 class SortOrderFilter(sortOrderURIs: List<Pair<String, String>>) : Filter.Select<String>("Sort By", sortOrderURIs.map { it.first }.toTypedArray())
@@ -29,3 +52,18 @@ class ParodiesFilter : AdvancedTextFilter("Parodies")
 class ArtistsFilter : AdvancedTextFilter("Artists")
 class CharactersFilter : AdvancedTextFilter("Characters")
 class GroupsFilter : AdvancedTextFilter("Groups")
+
+/**
+ * The write-in boxes, kept in a collapsible group at the end of the filter list: a tag, parody,
+ * artist, character or group that the long lists above do not carry can be written down instead of
+ * hunted for.
+ */
+class AdvancedFilterGroup(advancedFilters: List<Filter<*>>) :
+    Filter.Group<Filter<*>>(
+        "Advanced",
+        listOf<Filter<*>>(
+            Filter.Header("Write names that are not listed above, separated by commas (,)."),
+            Filter.Header("Prepend a name with a dash (-) to keep it out."),
+            Filter.Header("Written names search the advanced search, which ignores the search term above."),
+        ) + advancedFilters,
+    )
