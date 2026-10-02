@@ -353,24 +353,31 @@ abstract class MangaDot :
             client.get(facetsUrl).use { it.parseAs<MangaList>() }
         }
         val tagsDeferred = async {
-            val tagsUrl = "$baseUrl/api/manga/tags".toHttpUrl()
+            // The plain tag list leaves out the 122 tags the site marks adult (BDSM, Incest,
+            // Futanari, ...); the site's own picker offers them, so the full list is asked for
+            // and the content rating filter decides what is shown.
+            val tagsUrl = "$baseUrl/api/manga/tags?adult=1".toHttpUrl()
             client.get(tagsUrl).use { it.parseAs<TagsResponse>() }
         }
 
         val facetsResponse = facetsDeferred.await()
         val tagsResponse = tagsDeferred.await()
 
+        // The site's index carries case variants of the same name ("Action" and "ACTION").
+        // The search ANDs the names together, so asking for every variant at once matches
+        // nothing; only the variant standing for the most titles survives.
         val genres = facetsResponse.facets?.genres
-            ?.map { it.key }
-            ?.filter { it !in demographicNames }
-            ?.distinct()
-            ?.sortedBy { it.lowercase(Locale.ROOT) }
+            .orEmpty()
+            .filter { it.key !in demographicNames }
+            .groupBy { normalizeName(it.key) }
+            .map { (_, variants) -> variants.maxByOrNull { it.count ?: 0 }!!.key }
+            .sortedBy { it.lowercase(Locale.ROOT) }
 
         val tags = tagsResponse.categories
             .flatMap { it.tags }
-            .map { it.name.trim() }
-            .filter { it.isNotEmpty() }
-            .distinct()
+            .filter { it.name.isNotBlank() }
+            .groupBy { normalizeName(it.name) }
+            .map { (_, variants) -> variants.maxByOrNull { it.seriesCount ?: 0 }!!.name.trim() }
             .sortedBy { it.lowercase(Locale.ROOT) }
 
         FilterDataDto(genres, tags).toJsonElement()
@@ -379,9 +386,8 @@ abstract class MangaDot :
     override fun getFilterList(data: JsonElement?): FilterList {
         val dto = data?.parseAs<FilterDataDto>()
 
-        val filters = mutableListOf(
+        val filters = mutableListOf<Filter<*>>(
             BrowseFilter(),
-            SortFilter(),
             StatusFilter(),
             VolumesFilter(),
             ScanlatorFilter(),
@@ -395,13 +401,16 @@ abstract class MangaDot :
         filters.addAll(
             listOf(
                 ContentRatingFilter(excludedContentRatingPref()),
+                SortFilter(),
                 TypeFilter(),
                 DemographicFilter(excludedDemographicsPref()),
             ),
         )
 
-        val genreList = dto?.genres?.sortedBy { it.lowercase(Locale.ROOT) }
-        val tagList = dto?.tags?.sortedBy { it.lowercase(Locale.ROOT) }
+        // Filter data cached by an older version may still hold duplicates; keep one of each
+        // so a ticked name can never be ANDed with a variant of itself.
+        val genreList = dto?.genres?.distinctBy { normalizeName(it) }?.sortedBy { it.lowercase(Locale.ROOT) }
+        val tagList = dto?.tags?.distinctBy { normalizeName(it) }?.sortedBy { it.lowercase(Locale.ROOT) }
 
         if (genreList != null) {
             filters.add(GenreFilter(genreList, excludedGenresPref()))
@@ -817,7 +826,9 @@ abstract class MangaDot :
             title = "Content Rating"
             entries = contentRatings.map { "Up to ${it.first}" }.toTypedArray()
             entryValues = contentRatings.map { it.second }.toTypedArray()
-            setDefaultValue("suggestive")
+            // The site shows every rating unless asked otherwise; default to the top of the
+            // scale so the extension matches it instead of silently dropping adult titles.
+            setDefaultValue("pornographic")
             summary = "%s"
         }
         screen.addPreference(contentRatingPref)

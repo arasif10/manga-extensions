@@ -91,11 +91,14 @@ jobs:
       - name: Collect extension icons
         run: |
           mkdir -p repo/icons
-          for dir in main/src/all/*/; do
+          # Every language folder, not just all: the publish script looks the icon up as
+          # <lang>.<name>.png, so a source living in src/en (MangaDot) needs its icon too.
+          for dir in main/src/*/*/; do
+            lang=$(basename "$(dirname "$dir")")
             ext=$(basename "$dir")
             icon="$dir/res/mipmap-xxxhdpi/ic_launcher.png"
             if [ -f "$icon" ]; then
-              cp "$icon" "repo/icons/all.$ext.png"
+              cp "$icon" "repo/icons/$lang.$ext.png"
             fi
           done
 

@@ -383,7 +383,8 @@ class TagCategory(
 @Serializable
 class TagItem(
     val name: String,
-    val weight: String? = null,
+    @SerialName("series_count")
+    val seriesCount: Int? = null,
     @SerialName("is_adult")
     val isAdult: Boolean = false,
 )

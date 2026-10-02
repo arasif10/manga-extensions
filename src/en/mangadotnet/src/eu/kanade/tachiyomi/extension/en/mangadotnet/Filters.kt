@@ -291,7 +291,7 @@ private val NAME_QUERY_ALIASES = aliasesOf(
 private fun aliasesOf(vararg pairs: Pair<String, String>): Map<String, String> = pairs.associate { normalizeName(it.first) to it.second }
 
 /** Case, spacing and punctuation are ignored so a name can be written the way it is spoken. */
-private fun normalizeName(value: String): String = value.lowercase().filter { it.isLetterOrDigit() }
+internal fun normalizeName(value: String): String = value.lowercase().filter { it.isLetterOrDigit() }
 
 class MinChaptersFilter : Filter.Text("Minimum Chapters")
 
