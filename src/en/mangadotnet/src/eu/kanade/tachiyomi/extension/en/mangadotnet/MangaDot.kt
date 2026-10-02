@@ -729,7 +729,11 @@ abstract class MangaDot :
     private fun excludedDemographicsPref(): Set<String> = preferences.getStringSet(EXCLUDE_DEMOGRAPHIC_PREF, emptySet())!!
 
     private fun excludedContentRatingPref(): Set<String> {
-        val highest = preferences.getString(CONTENT_RATING_PREF, "suggestive")!!
+        // This fallback is what an install that has never opened the settings screen reads, so it
+        // has to match the screen's own default. Anything lower silently drops the erotica and
+        // pornographic titles the site lists, which reads as broken filters (a BDSM genre filter
+        // returned 12 of the site's 27 titles that way).
+        val highest = preferences.getString(CONTENT_RATING_PREF, "pornographic")!!
         val index = contentRatings.indexOfFirst { it.second == highest }.coerceAtLeast(0)
         return contentRatings.drop(index + 1).map { it.second }.toSet()
     }
