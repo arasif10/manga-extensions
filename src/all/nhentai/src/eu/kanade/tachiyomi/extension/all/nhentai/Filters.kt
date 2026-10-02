@@ -4,18 +4,32 @@ import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 
 /**
- * The sort comes first and the write-in boxes come last, so the long tag list stays out of the way
- * of the boxes that are ticked most often.
+ * The sort comes first and the write-in boxes come last, so the long lists stay out of the way of
+ * the boxes that are ticked most often. Each kind of entry the site sorts its works by has a list
+ * of its own, filled with the entries its own index puts first and kept A to Z.
+ *
+ * The language list is left out of a source that is already pinned to one language, since the two
+ * would ask for different languages at once and answer with nothing.
  */
-fun getFilters(): FilterList = FilterList(
-    SortFilter(),
-    Filter.Separator(),
-    TagGroupFilter("Tags", "tag", TAG_VOCABULARY),
-    TagGroupFilter("Categories", "category", CATEGORY_VOCABULARY),
-    TagGroupFilter("Languages", "language", LANGUAGE_VOCABULARY),
-    Filter.Separator(),
-    AdvancedFilterGroup(),
-)
+fun getFilters(isMulti: Boolean, defaultSort: Int): FilterList {
+    val filters = mutableListOf<Filter<*>>(
+        SortFilter(defaultSort),
+        Filter.Separator(),
+        TagGroupFilter("Tags", "tag", TAG_VOCABULARY),
+        TagGroupFilter("Artists", "artist", ARTIST_VOCABULARY),
+        TagGroupFilter("Groups", "group", GROUP_VOCABULARY),
+        TagGroupFilter("Parodies", "parody", PARODY_VOCABULARY),
+        TagGroupFilter("Characters", "character", CHARACTER_VOCABULARY),
+        TagGroupFilter("Categories", "category", CATEGORY_VOCABULARY),
+    )
+
+    if (isMulti) filters += TagGroupFilter("Languages", "language", LANGUAGE_VOCABULARY)
+
+    filters += Filter.Separator()
+    filters += AdvancedFilterGroup()
+
+    return FilterList(*filters.toTypedArray())
+}
 
 /** One tickable option: ticked to search for it, ticked twice to keep it out. */
 internal class TriStateTag(name: String, val value: String) : Filter.TriState(name)
@@ -45,28 +59,10 @@ internal open class TagGroupFilter(
     private fun clause(value: String, exclude: Boolean) = "${if (exclude) "-" else ""}$category:\"$value\""
 }
 
-internal class SortFilter :
-    Filter.Select<String>(
-        "Sort by",
-        SORTS.map { it.first }.toTypedArray(),
-    ) {
-    val selected: String get() = SORTS[state].second
-
-    private companion object {
-        private val SORTS = listOf(
-            "Latest" to "date",
-            "Popular: All Time" to "popular",
-            "Popular: This Month" to "popular-month",
-            "Popular: This Week" to "popular-week",
-            "Popular: Today" to "popular-today",
-        )
-    }
-}
-
 /**
  * The write-in boxes, kept in a collapsible group at the end of the filter list: a tag, parody,
- * character, artist, group or language that the lists above do not carry can be written down
- * instead of hunted for, and a leading dash keeps one out.
+ * character, artist or group that the long lists above do not carry can be written down instead of
+ * hunted for, and a leading dash keeps one out.
  */
 internal class AdvancedFilterGroup :
     Filter.Group<Filter<*>>(
@@ -80,6 +76,12 @@ internal class AdvancedFilterGroup :
             TextFilter("Artists", "artist"),
             TextFilter("Groups", "group"),
             TextFilter("Languages", "language"),
+            Filter.Header("Filter by pages, for example: >20"),
+            TextFilter("Pages", "pages", quoted = false),
+            Filter.Header("Filter by upload date, units are h, d, w, m, y. Example: >20d"),
+            TextFilter("Uploaded", "uploaded", quoted = false),
+            OffsetPageFilter(),
+            FavoriteFilter(),
         ),
     )
 
@@ -87,7 +89,11 @@ internal class AdvancedFilterGroup :
  * A write-in box. Every name written into it becomes a search clause of its own category, so
  * `sole female, ahegao` in the tag box searches for both tags.
  */
-internal open class TextFilter(name: String, private val category: String) : Filter.Text(name) {
+internal open class TextFilter(
+    name: String,
+    private val category: String,
+    private val quoted: Boolean = true,
+) : Filter.Text(name) {
 
     val clauses: List<String> get() = state.split(',', ';', '\n').mapNotNull { token ->
         val written = token.trim()
@@ -98,8 +104,40 @@ internal open class TextFilter(name: String, private val category: String) : Fil
         if (name.isEmpty()) return@mapNotNull null
 
         // A name written with its own category in front, like `artist:kubo lion`, is kept as it
-        // is; every other name is asked for as the category this box stands for.
-        val value = if (name.contains(':')) name else "$category:\"$name\""
+        // is; every other name is asked for as the category this box stands for. Page counts and
+        // upload dates are written as the site's own expressions, so they are never quoted.
+        val value = when {
+            name.contains(':') -> name
+            quoted -> "$category:\"$name\""
+            else -> "$category:$name"
+        }
         if (exclude) "-$value" else value
+    }
+}
+
+/** Skips that many result pages, which is how a reader carries on from where a search stopped. */
+internal class OffsetPageFilter : Filter.Text("Offset results by # pages")
+
+internal class FavoriteFilter : Filter.CheckBox("Show favorites only (needs an API key)", false)
+
+internal class SortFilter(default: Int) :
+    Filter.Select<String>(
+        "Sort by",
+        SORTS.map { it.first }.toTypedArray(),
+        default,
+    ) {
+    val selected: String get() = SORTS[state].second
+
+    companion object {
+        val SORTS = listOf(
+            "Popular: All Time" to "popular",
+            "Popular: This Month" to "popular-month",
+            "Popular: This Week" to "popular-week",
+            "Popular: Today" to "popular-today",
+            "Recent" to "date",
+        )
+
+        /** The index a saved preference stands for, falling back to the site's own default. */
+        fun indexOf(value: String?): Int = SORTS.indexOfFirst { it.second == value }.coerceAtLeast(0)
     }
 }
