@@ -146,13 +146,13 @@ abstract class NHentai :
     }
 
     // Popular + Latest
-    override suspend fun getPopularManga(page: Int): MangasPage = search(nhLangSearch(), page, "popular")
+    override suspend fun getPopularManga(page: Int): MangasPage = searchTerm(terms(nhLangSearch(), emptyList()), page, "popular")
 
     override suspend fun getLatestUpdates(page: Int): MangasPage = if (nhLang.isBlank()) {
         listing(page)
     } else {
         // `date` is the order the site's own listing comes in, newest uploads first.
-        search("language:$nhLang", page, "date")
+        searchTerm(terms("language:$nhLang", emptyList()), page, "date")
     }
 
     private suspend fun listing(page: Int): MangasPage {
@@ -171,27 +171,60 @@ abstract class NHentai :
         }
 
         val offset = page + (filters.findWritten<OffsetPageFilter>()?.state?.toIntOrNull() ?: 0)
-        val terms = buildList {
-            if (query.isNotBlank()) add(query.trim())
+        val clauses = buildList {
             nhLangSearch().takeIf(String::isNotEmpty)?.let(::add)
             addAll(filters.clauses())
-        }.joinToString(" ")
+        }
 
         if (filters.findWritten<FavoriteFilter>()?.state == true) {
             val url = "$apiUrl/favorites".toHttpUrl().newBuilder()
-                .addQueryParameter("q", terms)
+                .addQueryParameter("q", terms(query.firstSpelling(), clauses))
                 .addQueryParameter("page", offset.toString())
                 .build()
 
             return client.get(url).parseAs<PaginatedResponse<GalleryItem>>().toMangasPage(offset)
         }
 
-        return search(terms, offset, filters.findWritten<SortFilter>()?.selected)
+        return search(query, clauses, offset, filters.findWritten<SortFilter>()?.selected)
     }
 
-    private suspend fun search(terms: String, page: Int, sort: String?): MangasPage {
+    /**
+     * The reader's query read the way the site's search reads it: every word of it has to be found
+     * in the title or the tags of a work and is matched from its beginning, so a title asked for as
+     * it is printed - both spellings the site files it under, a pipe between them, and the
+     * decorations it was uploaded with - carries words no one work has. The spellings are asked for
+     * one after the other, then the words of the first with their ends cut off, which the site
+     * still matches, and last the longest word on its own, which is what is left of a query whose
+     * other words were misspelled. The first answer that carries a work is the one the reader gets.
+     *
+     * A reader who ticks boxes without writing a title is asking for the works those boxes allow, so
+     * the boxes are the whole question then, and with none of them ticked either the site is asked
+     * for everything it carries - which is what a search written as nothing means.
+     */
+    private suspend fun search(query: String, clauses: List<String>, page: Int, sort: String?): MangasPage {
+        val written = query.words()
+
+        if (written.isEmpty()) return searchTerm(terms(query, clauses), page, sort)
+
+        for ((attempt, broad) in query.attempts()) {
+            val answer = searchTerm(terms(attempt, clauses), page, sort)
+            if (answer.mangas.isEmpty()) continue
+
+            // A broad answer carries the works that share no more than a word, so the ones the
+            // reader's own words fit are moved up front for the reader to pick from.
+            return if (broad) {
+                MangasPage(answer.mangas.sortedByDescending { it.title.fit(written) }, answer.hasNextPage)
+            } else {
+                answer
+            }
+        }
+
+        return MangasPage(emptyList(), false)
+    }
+
+    private suspend fun searchTerm(term: String, page: Int, sort: String?): MangasPage {
         val url = "$apiUrl/search".toHttpUrl().newBuilder()
-            .addQueryParameter("query", terms.ifBlank { "\"\"" })
+            .addQueryParameter("query", term.ifBlank { "\"\"" })
             .addQueryParameter("page", page.toString())
             .apply { if (!sort.isNullOrEmpty()) addQueryParameter("sort", sort) }
             .build()
@@ -416,6 +449,81 @@ abstract class NHentai :
         }
     }
 }
+
+/** The term a search is asked with: what the reader wrote and the clauses they asked for. */
+private fun terms(query: String, clauses: List<String>): String = (listOf(query) + clauses)
+    .filter(String::isNotBlank)
+    .joinToString(" ")
+
+/**
+ * The terms a query is tried with, in the order they are asked for: each spelling of the title as
+ * the site files it, then the first spelling with every word cut to its beginning - which the site
+ * still matches, and which forgives a misspelled ending, an apostrophe and the decorations a title
+ * was uploaded with - and last the longest words on their own, for a query whose other words were
+ * misspelled. The broad terms are the ones whose answers are worth sorting, and how many of them
+ * are asked for at all is kept low, since every one of them is a request of the site. A term
+ * already asked for is not asked twice, so a single-word query is not read over and over.
+ */
+private fun String.attempts(): List<Pair<String, Boolean>> = buildList {
+    val spellings = spellings()
+    val first = spellings.firstOrNull() ?: trim()
+    val cut = first.cutWords()
+    val longest = first.words().sortedByDescending(String::length).take(BROAD_WORDS).map { it.take(PREFIX_LENGTH) }
+
+    spellings.forEach { add(it to false) }
+    if (cut.isNotEmpty()) add(cut to false)
+    longest.filter { it.length >= SHORTEST_WORD }.forEach { add(it to true) }
+}.distinctBy { it.first }.take(MAX_ATTEMPTS)
+
+/**
+ * The spellings a title is filed under, written by the site with a pipe between them, and by this
+ * extension the same way, so a search made from a title the app shows carries both.
+ */
+private fun String.spellings(): List<String> = split('|').map(String::trim).filter(String::isNotBlank)
+
+/** The title as the reader is shown it, which is the spelling the site lists first. */
+private fun String.firstSpelling(): String = spellings().firstOrNull() ?: trim()
+
+/** Everything a word is written with that is not a letter or a digit, dropped. */
+private fun String.words(): List<String> {
+    val words = mutableListOf<String>()
+    val word = StringBuilder()
+
+    for (char in this) {
+        if (char.isLetterOrDigit()) {
+            word.append(char)
+        } else {
+            if (word.isNotEmpty()) words += word.toString()
+            word.clear()
+        }
+    }
+
+    if (word.isNotEmpty()) words += word.toString()
+
+    return words
+}
+
+/** The words of a query with their ends cut off, which the site's search still matches. */
+private fun String.cutWords(): String = words().joinToString(" ") { it.take(PREFIX_LENGTH) }
+
+/** How many of the reader's words a title carries, so the nearest title can be read first. */
+private fun String.fit(words: List<String>): Int {
+    val title = lowercase().words()
+
+    return words.count { word -> title.any { it.startsWith(word.lowercase()) } }
+}
+
+/** The length a word is asked with: the site matches a word from its beginning. */
+private const val PREFIX_LENGTH = 5
+
+/** The length a name has to reach before it is worth a search on its own. */
+private const val SHORTEST_WORD = 4
+
+/** How many of the reader's longest words are asked for one by one when nothing else answers. */
+private const val BROAD_WORDS = 2
+
+/** How many terms one search is asked with at most, since each of them is a request of the site. */
+private const val MAX_ATTEMPTS = 4
 
 /**
  * Every clause the reader asked for from the tick boxes and the write-in boxes, which sit inside
