@@ -18,6 +18,12 @@ fun getFilters(lang: String): FilterList {
     // list there would let the two contradict each other and answer with nothing.
     if (lang == "all") filters += LanguageFilter()
 
+    // What a gallery is: the work it continues, the people in it and the circle behind it. The
+    // lists hold the ones the site's own index carries as the most popular.
+    filters += SeriesFilter()
+    filters += CharactersFilter()
+    filters += GroupsFilter()
+
     filters += FemaleTagsFilter()
     filters += MaleTagsFilter()
     filters += OtherTagsFilter()
@@ -75,27 +81,64 @@ internal class CategoryFilter :
         ),
     )
 
-/** The languages the site tags its galleries with. */
+/**
+ * The languages the site tags its galleries with, A to Z, the ones it answers with alone: the site
+ * carries pages for a few more languages - Tagalog, Burmese, Bulgarian and Mongolian among them -
+ * but its search cannot name any of them, so ticking one would always answer with nothing.
+ */
 internal class LanguageFilter :
     TagGroupFilter(
         "Language",
         "language",
         listOf(
-            "English" to "english",
-            "Japanese" to "japanese",
+            "Arabic" to "arabic",
             "Chinese" to "chinese",
-            "Korean" to "korean",
-            "Spanish" to "spanish",
+            "Czech" to "czech",
+            "Dutch" to "dutch",
+            "English" to "english",
             "French" to "french",
-            "Portuguese" to "portuguese",
-            "Italian" to "italian",
-            "Russian" to "russian",
-            "Thai" to "thai",
-            "Vietnamese" to "vietnamese",
-            "Indonesian" to "indonesian",
             "German" to "german",
+            "Hungarian" to "hungarian",
+            "Icelandic" to "icelandic",
+            "Indonesian" to "indonesian",
+            "Italian" to "italian",
+            "Japanese" to "japanese",
+            "Javanese" to "javanese",
+            "Korean" to "korean",
+            "Latin" to "latin",
             "Polish" to "polish",
+            "Portuguese" to "portuguese",
+            "Russian" to "russian",
+            "Spanish" to "spanish",
+            "Thai" to "thai",
+            "Turkish" to "turkish",
+            "Ukrainian" to "ukrainian",
+            "Vietnamese" to "vietnamese",
         ),
+    )
+
+/** The works the site files its galleries under, the ones it lists as the most popular. */
+internal class SeriesFilter :
+    TagGroupFilter(
+        "Series",
+        "serie",
+        nameOptions(POPULAR_SERIES),
+    )
+
+/** The characters that most often appear in a gallery, taken from the site's own character index. */
+internal class CharactersFilter :
+    TagGroupFilter(
+        "Characters",
+        "character",
+        nameOptions(POPULAR_CHARACTERS),
+    )
+
+/** The circles behind the most galleries, taken from the site's own group index. */
+internal class GroupsFilter :
+    TagGroupFilter(
+        "Groups",
+        "group",
+        nameOptions(POPULAR_GROUPS),
     )
 
 /** Every tag the site files under the female category, A to Z. */
@@ -143,6 +186,8 @@ internal class AdvancedFilterGroup :
             TextFilter("Languages", "language"),
             Filter.Header("Filter by pages, for example: >20"),
             TextFilter("Pages", "page"),
+            Filter.Header("Filter by the date a gallery was added, for example: <30d"),
+            TextFilter("Added", "added"),
         ),
     )
 
@@ -156,8 +201,8 @@ internal open class TextFilter(
     private val categorySuffix: String = "",
 ) : Filter.Text(name) {
 
-    /** The page count is written the way the site accepts it, everything else as tag names. */
-    private val isPageCount = type == "page"
+    /** The box where the count is written the way the site reads it, everything else as tag names. */
+    private val isRawValue = type == "page" || type == "added"
 
     val clauses: List<String> get() = state.split(',', ';', '\n').mapNotNull { token ->
         val written = token.trim()
@@ -167,7 +212,7 @@ internal open class TextFilter(
         val name = written.removePrefix("-").lowercase().trim()
         if (name.isEmpty()) return@mapNotNull null
 
-        if (isPageCount) {
+        if (isRawValue) {
             "$type:$name"
         } else {
             buildString {
@@ -210,6 +255,14 @@ private val getSortsList: List<Pair<String, String>> = listOf(
 private fun tagOptions(data: String, suffix: String = ""): List<Pair<String, String>> = data.trimIndent().lines().map(String::trim).filter(String::isNotEmpty).map { line ->
     val (label, name) = line.split('|', limit = 2)
     label to if (suffix.isEmpty()) name else "$name ($suffix)"
+}
+
+/**
+ * The names the site's own index carries, one per line, with the label read off the name itself so
+ * a character the site knows by two names - `sailor moon | usagi tsukino` - keeps both of them.
+ */
+private fun nameOptions(data: String): List<Pair<String, String>> = data.trimIndent().lines().map(String::trim).filter(String::isNotEmpty).map { name ->
+    Hentai3Utils.capitalizeEach(name) to name
 }
 
 private val FEMALE_TAGS =
@@ -2445,4 +2498,781 @@ private val OTHER_TAGS =
         Yuzu Pyon|yuzu pyon
         Zenten Ukemi Tomo No Kai|zenten ukemi tomo no kai
         Zubatto|zubatto
+    """
+
+/**
+ * The works the site's own Series index lists as its most popular ones - the two hundred and fifty
+ * it carries the most galleries of - kept A to Z, which is the order the filter shows them in. A
+ * name is written the way the site searches it, so a series the site knows by two titles -
+ * `sailor moon | bishoujo senshi sailor moon` - keeps both of them.
+ */
+private val POPULAR_SERIES =
+    """
+        accel world
+        ace attorney | gyakuten saiban
+        ah my goddess | aa megami-sama
+        akebi no mi
+        amagami
+        amagi brilliant park
+        ano hi mita hana no namae wo bokutachi wa mada shiranai
+        ano natsu de matteru | waiting in the summer
+        ao no exorcist | blue exorcist
+        aquarion evol
+        arena of valor
+        arknights
+        axis powers hetalia
+        azur lane
+        baka to test to shoukanjuu
+        bakemonogatari
+        bakuman
+        bang dream
+        bayonetta
+        black lagoon
+        blazblue
+        bleach
+        blue archive
+        boku wa tomodachi ga sukunai
+        bokutachi wa benkyou ga dekinai
+        boruto
+        cardfight vanguard
+        chuunibyou demo koi ga shitai
+        clannad
+        code geass
+        dagashi kashi
+        danganronpa
+        darker than black
+        darkstalkers | vampire
+        darling in the franxx
+        date a live
+        dead or alive
+        detective conan | meitantei conan
+        dog days
+        dokidoki precure
+        dragon ball
+        dragon ball z
+        dragon quest
+        dragon quest iii
+        dragon quest iv
+        dragon quest v
+        dragon quest xi
+        dragonaut
+        dragons crown
+        dream c club
+        dungeon ni deai o motomeru no wa machigatteiru darou ka
+        dynasty warriors | shin sangoku musou
+        ensemble stars
+        fairy tail
+        fatal fury | garou densetsu
+        fate extra
+        fate grand order
+        fate hollow ataraxia
+        fate stay night
+        fate zero
+        final fantasy vii
+        final fantasy x-2
+        final fantasy xi
+        final fantasy xii
+        final fantasy xiii
+        final fight
+        fire emblem awakening | fire emblem kakusei
+        free
+        freezing
+        fresh precure
+        fullmetal alchemist | hagane no renkinjutsushi
+        futari wa pretty cure
+        futari wa pretty cure | futari wa precure
+        genshiken
+        genshin impact
+        ghost in the shell
+        gintama
+        girls frontline
+        girls und panzer
+        go princess precure
+        goblin slayer
+        god eater
+        gotoubun no hanayome | the quintessential quintuplets
+        granblue fantasy
+        guilty gear
+        gundam 00
+        gundam build fighters
+        gundam build fighters try
+        gundam seed
+        gundam seed destiny
+        haikyuu
+        hanasaku iroha
+        hataraku maou-sama
+        hayate no gotoku
+        heartcatch precure
+        highschool dxd
+        highschool of the dead
+        historys strongest disciple kenichi | shijou saikyou no deshi kenichi
+        hololive
+        honkai gakuen
+        hyouka
+        hyperdimension neptunia | choujigen game neptune
+        ichigo 100 | strawberry 100
+        ikkitousen | battle vixens
+        infinite stratos
+        inuyasha
+        is
+        its not my fault that im not popular | watashi ga motenai no wa dou kangaetemo omaera ga warui
+        jojos bizarre adventure | jojo no kimyou na bouken
+        jujutsu kaisen
+        k-on
+        kaguya-sama wa kokurasetai | kaguya-sama love is war
+        kampfer
+        kanon
+        kantai collection
+        kemono friends
+        keroro gunsou | sgt. frog
+        kill la kill
+        kimetsu no yaiba | demon slayer
+        kimi no na wa.
+        king of fighters
+        kisei juui suzune
+        kochikame
+        koihime musou
+        kono subarashii sekai ni syukufuku o
+        kuroko no basuke
+        kyoukai senjou no horizon | horizon in the middle of nowhere
+        league of legends
+        love hina
+        love live
+        love live nijigasaki high school idol club
+        love live sunshine
+        love plus
+        lucky star
+        macross frontier
+        magi the labyrinth of magic
+        mahou sensei negima
+        mahou shoujo lyrical nanoha | magical girl lyrical nanoha
+        mahouka koukou no rettousei
+        maken-ki
+        maria-sama ga miteru
+        medaka box
+        metroid
+        mirai nikki
+        mobile suit gundam | kidou senshi gundam
+        monster hunter
+        monster musume no iru nichijou
+        my hero academia | boku no hero academia
+        my little pony friendship is magic
+        nanatsu no taizai | the seven deadly sins
+        naruto
+        neon genesis evangelion
+        nier automata
+        nijisanji
+        nisekoi
+        okusan
+        one piece
+        one punch man
+        ookiku furikabutte | big windup
+        ore no imouto ga konna ni kawaii wake ga nai | my little sister cant be this cute
+        original
+        oshiete galko-chan
+        overlord
+        panty and stocking with garterbelt
+        persona 3
+        persona 4
+        persona 5
+        pokemon | pocket monsters
+        princess connect
+        prison school
+        puella magi madoka magica
+        queens blade
+        ragnarok online
+        ranma 12
+        re zero kara hajimeru isekai seikatsu
+        resident evil | biohazard
+        rosario vampire
+        saenai heroine no sodatekata
+        sailor moon | bishoujo senshi sailor moon
+        saint seiya | knights of the zodiac
+        saki
+        sakura taisen | sakura wars
+        samurai spirits | samurai shodown
+        school rumble
+        seishun buta yarou wa bunny girl senpai no yume o minai
+        sekirei
+        senki zesshou symphogear
+        senran kagura
+        shingeki no kyojin | attack on titan
+        shinrabansho | shinrabanshou choco
+        shokugeki no soma
+        smile precure
+        sono bisque doll wa koi o suru | my dress-up darling
+        sora no otoshimono | heavens lost property
+        soul eater
+        soulcalibur
+        space battleship yamato 2199
+        space battleship yamato | uchuu senkan yamato
+        spice and wolf | ookami to koushinryou
+        ssss.gridman
+        steinsgate
+        street fighter
+        strike witches
+        suisei no gargantia | gargantia on the verdurous planet
+        suite precure
+        super black jack | rio rainbow gate
+        super mario brothers | super mario bros.
+        super robot wars | super robot taisen
+        super sonico
+        sword art online
+        tachibana-san-chi no dansei jijou
+        taimanin asagi
+        taimanin yukikaze
+        tekken
+        tenchi muyo
+        tengen toppa gurren lagann
+        the idolmaster
+        the legend of heroes | eiyuu densetsu
+        the legend of zelda
+        the melancholy of haruhi suzumiya | suzumiya haruhi no yuuutsu
+        the world god only knows | kami nomi zo shiru sekai
+        tiger and bunny
+        to heart
+        to love-ru
+        toaru kagaku no railgun
+        toaru kagaku no railgun | a certain scientific railgun
+        toaru majutsu no index | a certain magical index
+        toaru project
+        toheart2
+        tokimeki memorial
+        touhou project
+        touken ranbu
+        tsukihime
+        ultraman
+        urusei yatsura
+        uzaki-chan wa asobitai
+        valkyria chronicles | senjou no valkyria
+        vocaloid
+        witch craft works
+        witchblade
+        working
+        x-men
+        xenoblade chronicles 2
+        yahari ore no seishun love come wa machigatteiru
+        yes precure 5
+        yotsubato
+        yu-gi-oh
+        yu-gi-oh 5ds
+        zero no tsukaima | the familiar of zero
+        zettai junpaku mahou shoujo
+    """
+
+/**
+ * The characters the site's own Character index keeps beside the most galleries, A to Z. A
+ * character the site knows by two names keeps both of them, the way its own page writes them.
+ */
+private val POPULAR_CHARACTERS =
+    """
+        aether
+        ahri
+        akagi
+        akali
+        alice margatroid
+        amazon
+        android 18
+        aqua
+        artoria pendragon
+        astolfo
+        asuka langley soryu
+        asuna yuuki
+        atago
+        aya shameimaru
+        ayane
+        ayase aragaki
+        azusa miura
+        azusa nakano
+        bayonetta
+        bb
+        bell cranel
+        belldandy
+        bianca whitaker
+        bismarck
+        boa hancock
+        bulma briefs
+        byakuren hijiri
+        c.c.
+        cammy white
+        cecilia alcott
+        charlotte dunois
+        chi chi
+        chitoge kirisaki
+        chun-li
+        darkness | lalatina dustiness ford
+        darkness | lalatina ford dustiness
+        djeeta
+        eirin yagokoro
+        eli ayase
+        eren jaeger
+        erina nakiri
+        eru chitanda
+        erza scarlet
+        fate testarossa
+        fumika sagisawa
+        fumina hoshino
+        ganyu
+        golden darkness
+        gran
+        gudako
+        gudao | ritsuka fujimaru
+        hachiman hikigaya
+        hamakaze
+        haruhi suzumiya
+        haruka nanase
+        haruna
+        haruna sairenji
+        hatate himekaidou
+        hero
+        hestia
+        hilda
+        hinata hyuga
+        hitagi senjougahara
+        hitomi
+        homura akemi
+        hong meiling
+        honoka kosaka
+        hotaru shidare
+        houki shinonono
+        ichigo kurosaki
+        ichika orimura
+        ino yamanaka
+        isuzu sento
+        izuku midoriya
+        jeanne alter
+        jeanne darc
+        jigoku no fubuki
+        junichi tachibana
+        juri han
+        kaga
+        kallen stadtfeld | kallen kouzuki
+        kanu unchou
+        kasen ibara
+        kashima
+        kasumi
+        katarina du couteau
+        katsuki bakugou
+        kazuma satou
+        kazuto kirigaya | kirito
+        kirino kousaka
+        koakuma
+        kodaka hasegawa
+        kokonotsu shikada
+        kongou
+        kotori minami
+        koyomi araragi
+        krillin
+        kyon
+        kyouko sakura
+        kyousuke kousaka
+        lala satalin deviluke
+        lei fang
+        lelouch vi britannia
+        levi ackerman
+        lucy heartfilia
+        lyfa | leafa
+        madoka kaname
+        mai shiranui
+        maki nishikino
+        makoto kikuchi
+        mami tomoe
+        mari illustrious makinami
+        marisa kirisame
+        master roshi
+        may
+        maya
+        mika jougasaki
+        mikasa ackerman
+        miki hoshii
+        mikoto misaka
+        miku hatsune
+        mikuru asahina
+        minami nitta
+        minamoto no raikou
+        mio akiyama
+        misaki shokuhou
+        misato katsuragi
+        miss fortune | sarah fortune
+        momiji inubashiri
+        momo velia deviluke
+        monkey d. luffy
+        morrigan aensland
+        musashi miyamoto
+        nagato
+        nami
+        nanoha takamachi
+        naruko anjou
+        naruto uzumaki
+        nene anegasaki
+        nico robin
+        nico yazawa
+        nightingale
+        nitori kawashiro
+        nozomi tojo
+        orihime inoue
+        patchouli knowledge
+        poison
+        prinz eugen
+        producer
+        raku ichijou
+        ran yakumo
+        rangiku matsumoto
+        ranma saotome
+        red saber | nero claudius caesar augustus germanicus
+        rei ayanami
+        rei miyamoto
+        reimu hakurei
+        reisen udongein inaba
+        rem
+        remilia scarlet
+        rider
+        rin hoshizora
+        rin shibuya
+        rin tosaka
+        rito yuuki
+        ritsu tainaka
+        ritsuko akagi
+        roronoa zoro
+        rosa
+        rukia kuchiki
+        ruri gokou
+        ryu
+        ryuuko matoi
+        saber alter
+        saber | arturia pendragon
+        sachiko ogasawara
+        saeko busujima
+        sailor jupiter | makoto kino
+        sailor mars | rei hino
+        sailor mercury | ami mizuno
+        sailor moon | usagi tsukino
+        sailor uranus | haruka tenoh
+        sailor venus | minako aino
+        sakura haruno
+        sakura kasugano
+        sakura matou
+        sakuya izayoi
+        sanae kochiya
+        sanji vinsmoke
+        sasuke uchiha
+        satori komeiji
+        sayaka miki
+        scathach
+        sena kashiwazaki
+        sensei
+        shielder | mash kyrielight
+        shigure
+        shigure kosaka
+        shiho nishizumi
+        shikikan
+        shimakaze
+        shinji ikari
+        shino asada | sinon
+        shirou emiya
+        shizune
+        shoukaku
+        son gohan
+        sona buvelle
+        sorceress
+        souji okita
+        subaru natsuki
+        suguha kirigaya
+        super sonico
+        suzuya
+        takane shijou
+        takao
+        tamaki kousaka
+        tamamo no mae
+        tartaglia | childe
+        tearju lunatique
+        teemo
+        teitoku
+        temari
+        tenryuu
+        tifa lockhart
+        tina armstrong
+        touma kamijou
+        tsubasa hanekawa
+        tsumugi kotobuki
+        tsunade
+        umi sonoda
+        utaha kasumigaoka
+        uzuki shimamura
+        vegeta
+        videl
+        warrior
+        yamato
+        yoko ritona | yoko littner
+        yoruichi shihoin
+        youmu konpaku
+        yozora mikazuki
+        yui hirasawa
+        yui kotegawa
+        yui yuigahama
+        yukari yakumo
+        yuki nagato
+        yuu narukami | seta souji
+        yuuka kazami
+        yuyuko saigyouji
+        zhongli
+    """
+
+/**
+ * The circles behind the most galleries, taken from the site's own Group index, A to Z. A gallery
+ * page prints no circle at all - the artist is written as a search of its own name - so this list
+ * is the only place a circle can be picked from.
+ */
+private val POPULAR_GROUPS =
+    """
+        774 house
+        8graphica
+        a.o.i
+        abgrund
+        acid-head
+        ajisaidenden
+        akiyama production
+        akkan-bi project
+        akumu no takuhaibin | nightmare express
+        akusei-shinseibutsu
+        alemateorema
+        alice no takarabako
+        amarini senpaku
+        amp | anti millennium project
+        amuai okashi seisakusho | amulai sweet factory
+        an-arc
+        angyadow
+        aroma gaeru
+        asanoya
+        atelier maruwa
+        avion village
+        axz
+        azasuke wind
+        bakunyu fullnerson
+        bakuretsu fusen
+        behind moon
+        black dog
+        bloody okojo
+        bluemage
+        brain dead
+        brio
+        busou megami
+        c.rs nest
+        cdpa
+        chotto dake aruyo.
+        choujikuu yousai kachuusha
+        ciaociao
+        circle kuusou zikken
+        circle outerworld
+        circle roman hikou
+        circle taihei-tengoku
+        clesta
+        comex
+        crazy9
+        crimson
+        dai 6 kichi
+        dairiseki
+        dangan minorz
+        dashigara 100
+        dex plus
+        digital accel works
+        digital lover
+        diogenes club
+        dl mate
+        douganebuibui
+        draw go
+        enuma elish
+        erect touch
+        eromazun
+        evork festa
+        extended part
+        fantasy wind
+        finecraft69
+        freehand tamashii
+        fukutsuu okosu
+        funi funi lab
+        futanarun
+        g-panda
+        g-scan corp.
+        gachinko shobou
+        gold rush
+        gust
+        h.b
+        haguruman
+        hakuginmokusei
+        hapoi-dokoro
+        hellabunna
+        hgh
+        hibi rakuraku
+        high risk revolution
+        high thrust
+        hirojuu renshuuchou
+        hito no fundoshi
+        honey bump
+        human high-light film
+        imperial chicken
+        insert
+        itou life
+        jack-pot
+        jenoa cake
+        jinsukeya
+        jouji mujoh
+        juicebox koujou | juice box factory
+        kabayakiya
+        kaguya hime koubou
+        kaiki nisshoku
+        kaiten sommelier
+        kaki no tane
+        kaminari-neko
+        kamogawaya
+        kamoro-sa-z
+        kansai gyogyou kyoudou kumiai
+        kanten jigenryuu
+        karakishi youhei-dan
+        kashiwa-ya
+        katamari-ya
+        katamimi buta
+        kawaisounako
+        kawaraya honpo
+        kaze no gotoku
+        kemokomoya
+        kensoh ogawa
+        kimmundo
+        kinokonomi
+        kiyosumi hurricane
+        kohakutei
+        konohanaku
+        kouchaya
+        kujira logic
+        kurimomo
+        kurione-sha
+        kurosawa pict
+        kuroyuki
+        kusari caterpillar
+        laminaria
+        leaz koubou
+        magono-tei
+        maidoll
+        majimadou
+        man chin low
+        manga super
+        mentaiko
+        mesu gorilla.
+        metabocafe offensive smell uproar
+        mikenekodou
+        mitarashi club
+        mix fry
+        modae tei
+        mokusei zaijuu
+        monaka udon
+        motchie kingdom
+        motsu ryouri
+        mtsp
+        muchi muchi seven
+        mugenkidou a
+        musashi-dou
+        nagaredamaya
+        nakayohi
+        nama cream biyori
+        namakemono kishidan
+        nanatsu no kagiana
+        nanimoshinai
+        naruho-dou
+        ncp
+        nekonokone
+        niku ringo
+        nounai ekijiru
+        null mayu
+        number2
+        ohkura bekkan
+        okina keikaku
+        oneekyou
+        oretachi misnon ikka
+        otomekibun
+        ozashiki
+        ozone
+        p-collection
+        p-forest
+        p.p
+        pianiishimo
+        pinvise
+        plant
+        pochi-goya.
+        pollinosis
+        primal gym
+        project harakiri
+        ptd
+        pucchu
+        pyramid house
+        queen of vanilla
+        raijinkai
+        redlight
+        redrop
+        rehabilitation
+        ribi dou
+        rippadou
+        rojiura jack
+        route1
+        rpg company 2
+        sago-jou
+        saigado
+        san se fang
+        sankaku apron
+        saz
+        secret society m
+        sengoku joketsu emaki
+        senpenbankashiki
+        service heaven
+        shimekiri sanpunmae
+        shinnihon pepsitou
+        shironegiya
+        shishioan
+        shoot the moon
+        shotaian
+        sorairo march
+        ssb
+        st. rio
+        stapspats
+        studio a
+        studio big-x
+        studio katsudon
+        studio kimigabuchi
+        studio pal
+        studio parm
+        studio triumph
+        studio wallaby
+        supe
+        t2 art works
+        takumi na muchi
+        tanuking sleep
+        telomerena
+        temparing
+        tetrodotoxin
+        ties
+        tiramisu tart
+        todd special
+        toluene ittokan
+        tora machine
+        toybox
+        try and hougen futari shakai
+        tsf no f
+        tsurikichi doumei
+        turtle.fish.paint
+        twinbox
+        u.r.c
+        udon-ya
+        uguisuya
+        waffle doumeiken
+        warabimochi
+        wata 120 percent
+        waterwheel
+        windarteam
+        wireframe
+        xration
+        yomothuhirasaka
+        yorokobi no kuni
+        youkai tamanokoshi
+        yowatari kouba
+        yuzuponz
+        zankirow
     """
