@@ -6,15 +6,26 @@ plugins {
 
 keiyoushi {
     name = "IMHentai"
-    versionCode = 1
+    // Raised from 1: the published index carries this number, and the app only offers an update
+    // when it is higher than the one already installed.
+    versionCode = 2
     contentWarning = ContentWarning.NSFW
     libVersion = "1.6"
-    theme = "galleryadults"
 
-    listOf("en", "ja", "es", "fr", "ko", "de", "ru", "all").forEach { language ->
+    // The site files every gallery under a language, so the same source is offered once per
+    // language it carries and once for everything, the way its own search reads them.
+    listOf("all", "en", "ja", "es", "fr", "ko", "de", "ru").forEach { sourceLang ->
         source {
-            lang = language
+            lang = sourceLang
             baseUrl = "https://imhentai.xxx"
         }
     }
+
+    deeplink {
+        path("/gallery/..*")
+    }
+}
+
+dependencies {
+    implementation(project(":lib:randomua"))
 }
