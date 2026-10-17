@@ -369,7 +369,7 @@ abstract class IMHentai :
             }
         }
 
-        val rest = offered.values
+        val scored = offered.values
             // A work a search answered that carries none of the gallery's entries is a work the
             // search matched on something else, and is left out; a work the site's own row named is
             // kept whether or not it carries any of them, since that row knows of what cannot be
@@ -379,10 +379,25 @@ abstract class IMHentai :
             // The works sharing the most of the gallery's own entries first, and among the works
             // sharing as many as each other, the site's own order.
             .sortedByDescending { offer -> offer.entries.count(answers.shared::contains) }
-            .map { it.manga }
-        val parts = document.otherParts(title, row.map { it.manga } + rest)
+        val parts = document.otherParts(title, row.map { it.manga } + scored.map { it.manga })
+        val partUrls = parts.map { it.url }.toSet()
+        val namedUrls = scored.filter { it.named }.map { it.manga.url }.toSet()
 
-        parts + rest.filterNot { work -> parts.any { it.url == work.url } }
+        // The works sharing the most of the gallery's entries first, the ones the site's own row
+        // named among them like any other.
+        val ranked = scored.map { it.manga }.filterNot { work -> work.url in partUrls }
+        val room = (MAX_RELATED - parts.size).coerceAtLeast(0)
+        val fits = ranked.take(room).map { it.url }.toSet()
+
+        // A gallery is filed under a dozen tags, so the works they answer with run well past what the
+        // row holds; the works the site's own row named that no room is left for are kept the last
+        // slots of the row rather than lost behind them, which is the site's own recommendation.
+        val tail = ranked
+            .filter { work -> work.url !in fits && work.url in namedUrls }
+            .take(SITE_ROW_SLOTS)
+        val tailUrls = tail.map { it.url }.toSet()
+
+        parts + ranked.filterNot { it.url in tailUrls }.take((room - tail.size).coerceAtLeast(0)) + tail
     }.getOrDefault(emptyList())
         .take(MAX_RELATED)
 
@@ -704,6 +719,12 @@ abstract class IMHentai :
          * gallery's entries were asked for.
          */
         private const val MAX_RELATED = 40
+
+        /**
+         * How many works the site's own row under a gallery is left at the end of the row at most,
+         * where the works the gallery's tags answer with cannot crowd it out.
+         */
+        private const val SITE_ROW_SLOTS = 10
 
         /** The order the works under a gallery are wanted in, out of the orders the site offers. */
         private const val RELATED_SORT = "pp"
